@@ -19,7 +19,7 @@ project (OpenGL-hpp)
 set(EXAMPLES
 	test1
 	)
-set(COMMON_LIBS glad glfw3dll)
+set(COMMON_LIBS glfw3dll)
 
 # 类的实现文件
 file(GLOB HEADER_IMPL_FILES

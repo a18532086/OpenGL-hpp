@@ -6,6 +6,7 @@
 #include <algorithm>
 #include <array>
 #include <cassert>
+#include <functional>
 #include <limits>
 #include <memory>
 #include <stdexcept>
@@ -2101,11 +2102,11 @@ class DispatchLoaderDynamic {
 #endif /* GL_OVR_multiview */
 #ifdef GL_OVR_multiview2
 #endif /* GL_OVR_multiview2 */
-    using PFN_GetProcAddr = void *(*)(const char *name);
+    using PFN_GetProcAddr = std::function<void*(const char *)>;
     DispatchLoaderDynamic() = default;
-    DispatchLoaderDynamic(PFN_GetProcAddr getProcAddr) { init(getProcAddr); }
+    DispatchLoaderDynamic(PFN_GetProcAddr const & getProcAddr) { init(getProcAddr); }
 
-    void init(PFN_GetProcAddr _loadProcAddr) {
+    void init(PFN_GetProcAddr const & _loadProcAddr) {
         if (_loadProcAddr == nullptr) return;
 #ifdef GL_VERSION_1_0
         glCullFace =
@@ -6610,9 +6611,12 @@ inline constexpr decltype(auto) ArrayOrObject(
     }
 }
 
-void test() {
-
+void initLoader(DispatchLoaderDynamic::PFN_GetProcAddr const & pGetProcAddr){
+#if defined(OPENGL_HPP_DISPATCH_LOADER_DYNAMIC)
+    OPENGL_HPP_DEFAULT_DISPATCHER = gl::DispatchLoaderDynamic(pGetProcAddr);
+#endif // OPENGL_HPP_DISPATCH_LOADER_DYNAMIC
 }
 
 }  // namespace OPENGL_HPP_NAMESPACE
+
 #endif  // OPENGL_HPP

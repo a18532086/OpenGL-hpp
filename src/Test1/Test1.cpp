@@ -30,16 +30,10 @@ class App {
 
         glfwMakeContextCurrent(window);
 
-        
-        
-
-        OPENGL_HPP_DEFAULT_DISPATCHER = gl::DispatchLoaderDynamic(
-            reinterpret_cast<gl::DispatchLoaderDynamic::PFN_GetProcAddr>(
-                glfwGetProcAddress));
+        gl::initLoader(glfwGetProcAddress);
 
         std::cout << OPENGL_HPP_DEFAULT_DISPATCHER.glGetString(GL_VERSION)
                   << std::endl;
-
 
         auto vaos = gl::createObjectv<gl::Buffer>(2);
 
@@ -70,7 +64,6 @@ class App {
         auto index = gl::get<GLint>(gl::StateVariables::eVertexArrayBinding);
 
         auto isDepTest = gl::get<bool>(gl::StateVariables::eDepthTest);
-
 
     }
     void run() {
