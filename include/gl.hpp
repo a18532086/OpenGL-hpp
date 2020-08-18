@@ -1,5 +1,13 @@
-#ifndef OPENGL_HPP
+﻿#ifndef OPENGL_HPP
 #define OPENGL_HPP
+
+#if defined(__GL_H__) || defined(__gl_h_)
+    #if defined(_glfw3_h_)
+    #error Please include GLFW/glfw3.h after gl.hpp, or define GLFW_INCLUDE_NONE before include GLFW header
+    #else
+    #error You have included GL/GL.h, Don't include this header,gl.hpp use GL/glcorearb.h
+    #endif // defined(_glfw3_h_)
+#endif // defined(__GL_H__) || defined(__gl_h_)
 
 #include <GL/glcorearb.h>
 
@@ -13,6 +21,7 @@
 #include <string>
 #include <type_traits>
 #include <vector>
+#include <sstream>
 
 #if !defined(OPENGL_HPP_NAMESPACE)
 #define OPENGL_HPP_NAMESPACE gl
@@ -20,9 +29,149 @@
 
 namespace OPENGL_HPP_NAMESPACE {
 
+// determine whether T is a dispatch, which must have a member name glGetString
+template <typename T, std::enable_if_t<std::is_class_v<T>, int> = 0>
+class _is_dispatch {
+    using yes = uint8_t;
+    using no = uint16_t;
+    struct _have_member_glGetString {
+        static constexpr auto glGetString = nullptr;
+    };
+    class Base : public T, public _have_member_glGetString {};
+    template <typename U>
+    static no deduce(
+        U *,
+        std::integral_constant<decltype(&_have_member_glGetString::glGetString),
+                                                 &U::glGetString> * = nullptr);
+    static yes deduce(...);
+
+   public:
+    static constexpr bool value =
+        (sizeof(yes) == sizeof(deduce(reinterpret_cast<Base *>(0))));
+};
+
+// determine whether T is a dispatch, which must have a member name glGetString
+template <typename T, std::enable_if_t<std::is_class_v<T>, int> = 0>
+constexpr bool _is_dispatch_v = _is_dispatch<T>::value;
+
+// determine whether T has a member name createFunc
+template <typename T, std::enable_if_t<std::is_class_v<T>, int> = 0>
+class _has_createFunc {
+    using yes = uint8_t;
+    using no = uint16_t;
+    struct _have_member_createFunc {
+        static constexpr auto createFunc = nullptr;
+    };
+    class Base : public T, public _have_member_createFunc {};
+    template <typename U>
+    static no deduce(
+        U *,
+        std::integral_constant<decltype(&_have_member_createFunc::createFunc),
+                                                 &U::createFunc> * = nullptr);
+    static yes deduce(...);
+
+   public:
+    static constexpr bool value =
+        sizeof(yes) == sizeof(deduce(reinterpret_cast<Base *>(0)));
+};
+
+template <typename T, std::enable_if_t<std::is_class_v<T>, int> = 0>
+constexpr bool _has_createFunc_v = _has_createFunc<T>::value;
+
+template <typename T, std::enable_if_t<std::is_class_v<T>, int> = 0>
+class _has_deleteFunc {
+    using yes = uint8_t;
+    using no = uint16_t;
+    struct _have_member_deleteFunc {
+        static constexpr auto deleteFunc = nullptr;
+    };
+    class Base : public T, public _have_member_deleteFunc {};
+    template <typename U>
+    static no deduce(
+        U *,
+        std::integral_constant<decltype(&_have_member_deleteFunc::deleteFunc),
+                                                 &U::deleteFunc> * = nullptr);
+    static yes deduce(...);
+
+   public:
+    static constexpr bool value =
+        sizeof(yes) == sizeof(deduce(reinterpret_cast<Base *>(0)));
+};
+
+template <typename T, std::enable_if_t<std::is_class_v<T>, int> = 0>
+constexpr bool _has_deleteFunc_v = _has_deleteFunc<T>::value;
+
+template <typename T>
+struct _member_pointer_extract_helper {
+};
+
+template <typename T,typename U>
+struct _member_pointer_extract_helper<T U::*> {
+    using class_type = U;
+    using member_type = T;
+};
+
+// 解非静态成员指针，返回class的类型 EN: as its name,extract the class type of member pointer
+template <typename T, typename U = std::decay_t<T> ,std::enable_if_t<
+                          std::is_member_pointer_v<U>, int> = 0>
+using _member_pointer_extract_class_t = typename _member_pointer_extract_helper<U>::class_type;
+
+// 解非静态成员指针，返回member的类型 EN: as its name,extract the member type of member pointer
+template <typename T,typename U = std::decay_t<T>, std::enable_if_t<std::is_member_pointer_v<U>,int> = 0>
+using _member_pointer_extract_member_t = typename _member_pointer_extract_helper<U>::member_type;
+
+
+// 同时检测是否为类且拥有相应的成员，再检测函数是否能接收对应类型的参数，
+//一起检测可以防止使用编译期长度createObject时，IDE将int误判为Dispatch，但是编译却能通过的情况
+template <
+    typename _T_Dispatch, typename _T_Object,
+    std::enable_if_t<
+        _has_createFunc_v<_T_Object> && _is_dispatch_v<_T_Dispatch>, int> = 0>
+class _is_invocable_createFunc {
+    using Tfunc = _member_pointer_extract_member_t<decltype(_T_Object::template createFunc<_T_Dispatch>)>;
+   public:
+    static constexpr bool value = std::is_invocable_v<Tfunc, GLsizei, GLuint *>;
+};
+
+template <
+    typename _T_Dispatch, typename _T_Object,
+    std::enable_if_t<
+        _has_createFunc_v<_T_Object> && _is_dispatch_v<_T_Dispatch>, int> = 0>
+constexpr bool _is_invocable_createFunc_v =
+    _is_invocable_createFunc<_T_Dispatch, _T_Object>::value;
+
+template <
+    typename _T_Dispatch, typename _T_Object,
+    std::enable_if_t<
+        _has_deleteFunc_v<_T_Object> && _is_dispatch_v<_T_Dispatch>, int> = 0>
+class _is_invocable_deleteFunc {
+    using Tfunc = _member_pointer_extract_member_t<decltype(_T_Object::template deleteFunc<_T_Dispatch>)>;
+
+   public:
+    static constexpr bool value =
+        std::is_invocable_v<Tfunc, GLsizei, const GLuint *>;
+};
+
+template <
+    typename _T_Dispatch, typename _T_Object,
+    std::enable_if_t<
+        _has_deleteFunc_v<_T_Object> && _is_dispatch_v<_T_Dispatch>, int> = 0>
+constexpr bool _is_invocable_deleteFunc_v =
+    _is_invocable_deleteFunc<_T_Dispatch, _T_Object>::value;
+
+template <typename _Tx>
+constexpr bool _is_get_type_v =
+    std::is_same_v<_Tx, GLint> || std::is_same_v<_Tx, GLfloat> ||
+    std::is_same_v<_Tx, GLint64> || std::is_same_v<_Tx, GLboolean> ||
+    std::is_same_v<_Tx, GLdouble> || std::is_same_v<_Tx, bool>;
+
+
+
 class DispatchLoaderDynamic;
 
 enum class StateVariables;
+
+enum class ConnectionState;
 
 template <typename T>
 class ArrayProxy;
@@ -74,56 +223,47 @@ extern OPENGL_HPP_STORAGE_API DispatchLoaderDynamic
 template <typename T, GLsizei N = 1,
           typename Dispatch = OPENGL_HPP_DEFAULT_DISPATCHER_TYPE,
           typename = std::enable_if_t<
-              std::is_invocable_v<decltype(Dispatch{}.*
-                                           T::template createFunc<Dispatch>),
-                                  GLsizei, typename T::handleType *> &&
-                  (N > 0U),
-              int>>
+              (N > 0U) && _is_invocable_createFunc_v<Dispatch, T>, int>>
 decltype(auto) createObject(Dispatch const &d = OPENGL_HPP_DEFAULT_DISPATCHER);
 
-template <typename T, typename Dispatch = OPENGL_HPP_DEFAULT_DISPATCHER_TYPE,
-          typename = std::enable_if_t<
-              std::is_invocable_v<decltype(Dispatch{}.*
-                                           T::template createFunc<Dispatch>),
-                                  GLsizei, typename T::handleType *>,
-              int>>
-std::vector<T> createObjectv(GLsizei n, Dispatch const &d = OPENGL_HPP_DEFAULT_DISPATCHER);
+template <
+    typename T, typename Dispatch = OPENGL_HPP_DEFAULT_DISPATCHER_TYPE,
+    typename = std::enable_if_t<_is_invocable_createFunc_v<Dispatch, T>, int>>
+std::vector<T> createObject(GLsizei n,
+                            Dispatch const &d = OPENGL_HPP_DEFAULT_DISPATCHER);
 
-template <typename T, typename Dispatch = OPENGL_HPP_DEFAULT_DISPATCHER_TYPE,
-          typename = std::enable_if_t<
-              std::is_invocable_v<decltype(Dispatch{}.*
-                                           T::template deleteFunc<Dispatch>),
-                                  GLsizei, const typename T::handleType *>,
-              int>>
+template <
+    typename T, typename Dispatch = OPENGL_HPP_DEFAULT_DISPATCHER_TYPE,
+    typename = std::enable_if_t<_is_invocable_deleteFunc_v<Dispatch, T>, int>>
 void deleteObject(ArrayProxy<const T> const &arrays,
                   Dispatch const &d = OPENGL_HPP_DEFAULT_DISPATCHER);
 
 template <typename _Tx, size_t N>
 constexpr decltype(auto) ArrayOrObject(std::array<_Tx, N> &_array) noexcept;
 
-template <
-    typename _Tx, std::size_t N = 1,
-    typename Dispatch = OPENGL_HPP_DEFAULT_DISPATCHER_TYPE,
-    typename = std::enable_if_t<
-        std::is_same_v<_Tx, GLint> || std::is_same_v<_Tx, GLfloat> ||
-            std::is_same_v<_Tx, GLint64> || std::is_same_v<_Tx, GLboolean> ||
-            std::is_same_v<_Tx, GLdouble> ||
-            std::is_same_v<_Tx, bool> && (N > 0U),
-        int>>
+template <typename _Tx, std::size_t N = 1,
+          typename Dispatch = OPENGL_HPP_DEFAULT_DISPATCHER_TYPE,
+          typename = std::enable_if_t<
+              _is_get_type_v<_Tx> && (N > 0U) && _is_dispatch_v<Dispatch>, int>>
 decltype(auto) get(StateVariables pname,
                    Dispatch const &d = OPENGL_HPP_DEFAULT_DISPATCHER);
 
-template <
-    typename _Tx, std::size_t N = 1,
-    typename Dispatch = OPENGL_HPP_DEFAULT_DISPATCHER_TYPE,
-    typename = std::enable_if_t<
-        std::is_same_v<_Tx, GLint> || std::is_same_v<_Tx, GLfloat> ||
-            std::is_same_v<_Tx, GLint64> || std::is_same_v<_Tx, GLboolean> ||
-            std::is_same_v<_Tx, GLdouble> ||
-            std::is_same_v<_Tx, bool> && (N > 0U),
-        int>>
+template <typename _Tx, std::size_t N = 1,
+          typename Dispatch = OPENGL_HPP_DEFAULT_DISPATCHER_TYPE,
+          typename = std::enable_if_t<
+              _is_get_type_v<_Tx> && (N > 0U) && _is_dispatch_v<Dispatch>, int>>
 decltype(auto) get(StateVariables pname, GLuint index,
                    Dispatch const &d = OPENGL_HPP_DEFAULT_DISPATCHER);
+
+template <typename Dispatch = OPENGL_HPP_DEFAULT_DISPATCHER_TYPE,
+          typename = std::enable_if_t<_is_dispatch_v<Dispatch>, int>>
+std::string getString(ConnectionState pname,
+                      Dispatch const &d = OPENGL_HPP_DEFAULT_DISPATCHER);
+
+template <typename Dispatch = OPENGL_HPP_DEFAULT_DISPATCHER_TYPE,
+          typename = std::enable_if_t<_is_dispatch_v<Dispatch>, int>>
+std::string getString(ConnectionState pname, GLuint index,
+                      Dispatch const &d = OPENGL_HPP_DEFAULT_DISPATCHER);
 
 class DispatchLoaderDynamic {
    public:
@@ -2102,11 +2242,13 @@ class DispatchLoaderDynamic {
 #endif /* GL_OVR_multiview */
 #ifdef GL_OVR_multiview2
 #endif /* GL_OVR_multiview2 */
-    using PFN_GetProcAddr = std::function<void*(const char *)>;
+    using PFN_GetProcAddr = std::function<void *(const char *)>;
     DispatchLoaderDynamic() = default;
-    DispatchLoaderDynamic(PFN_GetProcAddr const & getProcAddr) { init(getProcAddr); }
+    DispatchLoaderDynamic(PFN_GetProcAddr const &getProcAddr) {
+        init(getProcAddr);
+    }
 
-    void init(PFN_GetProcAddr const & _loadProcAddr) {
+    void init(PFN_GetProcAddr const &_loadProcAddr) {
         if (_loadProcAddr == nullptr) return;
 #ifdef GL_VERSION_1_0
         glCullFace =
@@ -5779,7 +5921,7 @@ enum class Error {
     eStackOverflow = GL_STACK_OVERFLOW
 };
 
-std::string to_string(Error value) {
+constexpr const char *to_string(Error value) {
     switch (value) {
         case Error::eInvalidEnum:
             return "InvalidEnum";
@@ -6035,6 +6177,14 @@ enum class StateVariables {
     eMaxElementIndex = GL_MAX_ELEMENT_INDEX
 };
 
+enum class ConnectionState {
+    eVendor = GL_VENDOR,
+    eRenderer = GL_RENDERER,
+    eVersion = GL_VERSION,
+    eShadingLanguageVersion = GL_SHADING_LANGUAGE_VERSION,
+    eExtensions = GL_EXTENSIONS,
+};
+
 template <typename T>
 class ArrayProxy {
    public:
@@ -6050,31 +6200,32 @@ class ArrayProxy {
     ArrayProxy(typename std::remove_const<T>::type &value) noexcept
         : m_count(1), m_ptr(&value) {}
 
-    ArrayProxy(uint32_t count, T *ptr) noexcept : m_count(count), m_ptr(ptr) {}
+    ArrayProxy(std::size_t count, T *ptr) noexcept
+        : m_count(count), m_ptr(ptr) {}
 
     template <typename B = T,
               typename std::enable_if<std::is_const<B>::value, int>::type = 0>
-    ArrayProxy(uint32_t count,
+    ArrayProxy(std::size_t count,
                typename std::remove_const<T>::type *ptr) noexcept
         : m_count(count), m_ptr(ptr) {}
 
     ArrayProxy(std::initializer_list<T> const &list) noexcept
-        : m_count(static_cast<uint32_t>(list.size())), m_ptr(list.begin()) {}
+        : m_count(list.size()), m_ptr(list.begin()) {}
 
     template <typename B = T,
               typename std::enable_if<std::is_const<B>::value, int>::type = 0>
     ArrayProxy(std::initializer_list<typename std::remove_const<T>::type> const
                    &list) noexcept
-        : m_count(static_cast<uint32_t>(list.size())), m_ptr(list.begin()) {}
+        : m_count(list.size()), m_ptr(list.begin()) {}
 
     ArrayProxy(std::initializer_list<T> &list) noexcept
-        : m_count(static_cast<uint32_t>(list.size())), m_ptr(list.begin()) {}
+        : m_count(list.size()), m_ptr(list.begin()) {}
 
     template <typename B = T,
               typename std::enable_if<std::is_const<B>::value, int>::type = 0>
     ArrayProxy(std::initializer_list<typename std::remove_const<T>::type>
                    &list) noexcept
-        : m_count(static_cast<uint32_t>(list.size())), m_ptr(list.begin()) {}
+        : m_count(list.size()), m_ptr(list.begin()) {}
 
     template <size_t N>
     ArrayProxy(std::array<T, N> const &data) noexcept
@@ -6099,7 +6250,7 @@ class ArrayProxy {
     template <
         class Allocator = std::allocator<typename std::remove_const<T>::type>>
     ArrayProxy(std::vector<T, Allocator> const &data) noexcept
-        : m_count(static_cast<uint32_t>(data.size())), m_ptr(data.data()) {}
+        : m_count(data.size()), m_ptr(data.data()) {}
 
     template <
         class Allocator = std::allocator<typename std::remove_const<T>::type>,
@@ -6107,12 +6258,12 @@ class ArrayProxy {
         typename std::enable_if<std::is_const<B>::value, int>::type = 0>
     ArrayProxy(std::vector<typename std::remove_const<T>::type, Allocator> const
                    &data) noexcept
-        : m_count(static_cast<uint32_t>(data.size())), m_ptr(data.data()) {}
+        : m_count(data.size()), m_ptr(data.data()) {}
 
     template <
         class Allocator = std::allocator<typename std::remove_const<T>::type>>
     ArrayProxy(std::vector<T, Allocator> &data) noexcept
-        : m_count(static_cast<uint32_t>(data.size())), m_ptr(data.data()) {}
+        : m_count(data.size()), m_ptr(data.data()) {}
 
     template <
         class Allocator = std::allocator<typename std::remove_const<T>::type>,
@@ -6120,7 +6271,7 @@ class ArrayProxy {
         typename std::enable_if<std::is_const<B>::value, int>::type = 0>
     ArrayProxy(std::vector<typename std::remove_const<T>::type, Allocator>
                    &data) noexcept
-        : m_count(static_cast<uint32_t>(data.size())), m_ptr(data.data()) {}
+        : m_count(data.size()), m_ptr(data.data()) {}
 
     const T *begin() const noexcept { return m_ptr; }
 
@@ -6138,12 +6289,12 @@ class ArrayProxy {
 
     bool empty() const noexcept { return (m_count == 0); }
 
-    uint32_t size() const noexcept { return m_count; }
+    std::size_t size() const noexcept { return m_count; }
 
     T *data() const noexcept { return m_ptr; }
 
    private:
-    uint32_t m_count;
+    std::size_t m_count;
     T *m_ptr;
 };
 
@@ -6203,18 +6354,18 @@ class Buffer {
 
     bool operator!() const noexcept { return m_Buffer == 0; }
 
-    template <typename Dispatch = OPENGL_HPP_DEFAULT_DISPATCHER_TYPE>
+    template <typename Dispatch = OPENGL_HPP_DEFAULT_DISPATCHER_TYPE,typename = std::enable_if_t<_is_dispatch_v<Dispatch>, int>>
     void bind(BindTarget target,
               Dispatch const &d = {OPENGL_HPP_DEFAULT_DISPATCHER}) const {
         d.glBindBuffer(static_cast<GLenum>(target), m_Buffer);
     }
-    template <typename Dispatch = OPENGL_HPP_DEFAULT_DISPATCHER_TYPE>
+    template <typename Dispatch = OPENGL_HPP_DEFAULT_DISPATCHER_TYPE,typename = std::enable_if_t<_is_dispatch_v<Dispatch>, int>>
     void bindBase(BindBaseTarget target, GLuint index,
                   Dispatch const &d = {OPENGL_HPP_DEFAULT_DISPATCHER}) const {
         d.glBindBufferBase(static_cast<GLenum>(target), index, m_Buffer);
     }
 
-    template <typename Dispatch = OPENGL_HPP_DEFAULT_DISPATCHER_TYPE>
+    template <typename Dispatch = OPENGL_HPP_DEFAULT_DISPATCHER_TYPE,typename = std::enable_if_t<_is_dispatch_v<Dispatch>, int>>
     void bindRange(BindBaseTarget target, GLuint index, GLintptr offset,
                    GLsizeiptr size,
                    Dispatch const &d = {OPENGL_HPP_DEFAULT_DISPATCHER}) const {
@@ -6222,13 +6373,13 @@ class Buffer {
                             offset, size);
     }
 
-    template <typename Dispatch = OPENGL_HPP_DEFAULT_DISPATCHER_TYPE>
+    template <typename Dispatch = OPENGL_HPP_DEFAULT_DISPATCHER_TYPE,typename = std::enable_if_t<_is_dispatch_v<Dispatch>, int>>
     void unbind(BindTarget target,
                 Dispatch const &d = {OPENGL_HPP_DEFAULT_DISPATCHER}) const {
         d.glBindBuffer(static_cast<GLenum>(target), 0);
     }
 
-    template <typename Dispatch = OPENGL_HPP_DEFAULT_DISPATCHER_TYPE>
+    template <typename Dispatch = OPENGL_HPP_DEFAULT_DISPATCHER_TYPE,typename = std::enable_if_t<_is_dispatch_v<Dispatch>, int>>
     void destroy(Dispatch const &d = {OPENGL_HPP_DEFAULT_DISPATCHER}) {
         deleteObject<Buffer>(*this);
     }
@@ -6285,29 +6436,29 @@ class VertexArray {
 
     bool operator!() const noexcept { return m_VertexArray == 0; }
 
-    template <typename Dispatch = OPENGL_HPP_DEFAULT_DISPATCHER_TYPE>
+    template <typename Dispatch = OPENGL_HPP_DEFAULT_DISPATCHER_TYPE,typename = std::enable_if_t<_is_dispatch_v<Dispatch>, int>>
     void attribBinding(GLuint attribindex, GLuint bindingindex,
                        Dispatch const &d = {
                            OPENGL_HPP_DEFAULT_DISPATCHER}) const {
         d.glVertexArrayAttribBinding(m_VertexArray, attribindex, bindingindex);
     }
 
-    template <typename Dispatch = OPENGL_HPP_DEFAULT_DISPATCHER_TYPE>
+    template <typename Dispatch = OPENGL_HPP_DEFAULT_DISPATCHER_TYPE,typename = std::enable_if_t<_is_dispatch_v<Dispatch>, int>>
     void bind(Dispatch const &d = {OPENGL_HPP_DEFAULT_DISPATCHER}) const {
         d.glBindVertexArray(m_VertexArray);
     }
 
-    template <typename Dispatch = OPENGL_HPP_DEFAULT_DISPATCHER_TYPE>
+    template <typename Dispatch = OPENGL_HPP_DEFAULT_DISPATCHER_TYPE,typename = std::enable_if_t<_is_dispatch_v<Dispatch>, int>>
     void unBind(Dispatch const &d = {OPENGL_HPP_DEFAULT_DISPATCHER}) const {
         d.glBindVertexArray(0);
     };
 
-    template <typename Dispatch = OPENGL_HPP_DEFAULT_DISPATCHER_TYPE>
+    template <typename Dispatch = OPENGL_HPP_DEFAULT_DISPATCHER_TYPE,typename = std::enable_if_t<_is_dispatch_v<Dispatch>, int>>
     void destroy(Dispatch const &d = {OPENGL_HPP_DEFAULT_DISPATCHER}) {
         deleteObject<VertexArray>(*this);
     }
 
-    template <typename Dispatch = OPENGL_HPP_DEFAULT_DISPATCHER_TYPE>
+    template <typename Dispatch = OPENGL_HPP_DEFAULT_DISPATCHER_TYPE,typename = std::enable_if_t<_is_dispatch_v<Dispatch>, int>>
     GLint getElementArrayBufferBinding(
         Dispatch const &d = {OPENGL_HPP_DEFAULT_DISPATCHER}) const {
         GLint result{};
@@ -6316,7 +6467,7 @@ class VertexArray {
         return result;
     }
 
-    template <typename Dispatch = OPENGL_HPP_DEFAULT_DISPATCHER_TYPE>
+    template <typename Dispatch = OPENGL_HPP_DEFAULT_DISPATCHER_TYPE,typename = std::enable_if_t<_is_dispatch_v<Dispatch>, int>>
     bool getVertexAttribArrayEnabled(GLuint index,
                                      Dispatch const &d = {
                                          OPENGL_HPP_DEFAULT_DISPATCHER}) const {
@@ -6326,7 +6477,7 @@ class VertexArray {
         return result != GL_FALSE;
     }
 
-    template <typename Dispatch = OPENGL_HPP_DEFAULT_DISPATCHER_TYPE>
+    template <typename Dispatch = OPENGL_HPP_DEFAULT_DISPATCHER_TYPE,typename = std::enable_if_t<_is_dispatch_v<Dispatch>, int>>
     GLint getVertexAttribArraySize(GLuint index,
                                    Dispatch const &d = {
                                        OPENGL_HPP_DEFAULT_DISPATCHER}) const {
@@ -6336,7 +6487,7 @@ class VertexArray {
         return result;
     }
 
-    template <typename Dispatch = OPENGL_HPP_DEFAULT_DISPATCHER_TYPE>
+    template <typename Dispatch = OPENGL_HPP_DEFAULT_DISPATCHER_TYPE,typename = std::enable_if_t<_is_dispatch_v<Dispatch>, int>>
     GLint getVertexAttribArrayStride(GLuint index,
                                      Dispatch const &d = {
                                          OPENGL_HPP_DEFAULT_DISPATCHER}) const {
@@ -6346,7 +6497,7 @@ class VertexArray {
         return result;
     }
 
-    template <typename Dispatch = OPENGL_HPP_DEFAULT_DISPATCHER_TYPE>
+    template <typename Dispatch = OPENGL_HPP_DEFAULT_DISPATCHER_TYPE,typename = std::enable_if_t<_is_dispatch_v<Dispatch>, int>>
     AttributeType getVertexAttribArrayType(
         GLuint index,
         Dispatch const &d = {OPENGL_HPP_DEFAULT_DISPATCHER}) const {
@@ -6356,7 +6507,7 @@ class VertexArray {
         return static_cast<AttributeType>(result);
     }
 
-    template <typename Dispatch = OPENGL_HPP_DEFAULT_DISPATCHER_TYPE>
+    template <typename Dispatch = OPENGL_HPP_DEFAULT_DISPATCHER_TYPE,typename = std::enable_if_t<_is_dispatch_v<Dispatch>, int>>
     bool getVertexAttribArrayNormalized(
         GLuint index,
         Dispatch const &d = {OPENGL_HPP_DEFAULT_DISPATCHER}) const {
@@ -6366,7 +6517,7 @@ class VertexArray {
         return result != GL_FALSE;
     }
 
-    template <typename Dispatch = OPENGL_HPP_DEFAULT_DISPATCHER_TYPE>
+    template <typename Dispatch = OPENGL_HPP_DEFAULT_DISPATCHER_TYPE,typename = std::enable_if_t<_is_dispatch_v<Dispatch>, int>>
     bool getVertexAttribArrayInteger(GLuint index,
                                      Dispatch const &d = {
                                          OPENGL_HPP_DEFAULT_DISPATCHER}) const {
@@ -6376,7 +6527,7 @@ class VertexArray {
         return result != GL_FALSE;
     }
 
-    template <typename Dispatch = OPENGL_HPP_DEFAULT_DISPATCHER_TYPE>
+    template <typename Dispatch = OPENGL_HPP_DEFAULT_DISPATCHER_TYPE,typename = std::enable_if_t<_is_dispatch_v<Dispatch>, int>>
     bool getVertexAttribArrayLong(GLuint index,
                                   Dispatch const &d = {
                                       OPENGL_HPP_DEFAULT_DISPATCHER}) const {
@@ -6386,7 +6537,7 @@ class VertexArray {
         return result != GL_FALSE;
     }
 
-    template <typename Dispatch = OPENGL_HPP_DEFAULT_DISPATCHER_TYPE>
+    template <typename Dispatch = OPENGL_HPP_DEFAULT_DISPATCHER_TYPE,typename = std::enable_if_t<_is_dispatch_v<Dispatch>, int>>
     GLint getVertexAttribArrayDivisor(
         GLuint index,
         Dispatch const &d = {OPENGL_HPP_DEFAULT_DISPATCHER}) const {
@@ -6396,7 +6547,7 @@ class VertexArray {
         return result;
     }
 
-    template <typename Dispatch = OPENGL_HPP_DEFAULT_DISPATCHER_TYPE>
+    template <typename Dispatch = OPENGL_HPP_DEFAULT_DISPATCHER_TYPE,typename = std::enable_if_t<_is_dispatch_v<Dispatch>, int>>
     GLint getVertexAttribRelativeOffset(
         GLuint index,
         Dispatch const &d = {OPENGL_HPP_DEFAULT_DISPATCHER}) const {
@@ -6406,7 +6557,7 @@ class VertexArray {
         return result;
     }
 
-    template <typename Dispatch = OPENGL_HPP_DEFAULT_DISPATCHER_TYPE>
+    template <typename Dispatch = OPENGL_HPP_DEFAULT_DISPATCHER_TYPE,typename = std::enable_if_t<_is_dispatch_v<Dispatch>, int>>
     GLint64 getVertexBindingOffset(GLuint index,
                                    Dispatch const &d = {
                                        OPENGL_HPP_DEFAULT_DISPATCHER}) const {
@@ -6416,21 +6567,21 @@ class VertexArray {
         return result;
     }
 
-    template <typename Dispatch = OPENGL_HPP_DEFAULT_DISPATCHER_TYPE>
+    template <typename Dispatch = OPENGL_HPP_DEFAULT_DISPATCHER_TYPE,typename = std::enable_if_t<_is_dispatch_v<Dispatch>, int>>
     void enableAttribute(GLuint index,
                          Dispatch const &d = {
                              OPENGL_HPP_DEFAULT_DISPATCHER}) const {
         d.glEnableVertexArrayAttrib(m_VertexArray, index);
     }
 
-    template <typename Dispatch = OPENGL_HPP_DEFAULT_DISPATCHER_TYPE>
+    template <typename Dispatch = OPENGL_HPP_DEFAULT_DISPATCHER_TYPE,typename = std::enable_if_t<_is_dispatch_v<Dispatch>, int>>
     void disableAttribute(GLuint index,
                           Dispatch const &d = {
                               OPENGL_HPP_DEFAULT_DISPATCHER}) const {
         d.glDisableVertexArrayAttrib(m_VertexArray, index);
     }
 
-    template <typename Dispatch = OPENGL_HPP_DEFAULT_DISPATCHER_TYPE>
+    template <typename Dispatch = OPENGL_HPP_DEFAULT_DISPATCHER_TYPE,typename = std::enable_if_t<_is_dispatch_v<Dispatch>, int>>
     void attributeFormat(GLuint attribindex, GLint size, AttributeType type,
                          GLboolean normalized, GLuint relativeoffset,
                          Dispatch const &d = {
@@ -6440,7 +6591,7 @@ class VertexArray {
                                     relativeoffset);
     }
 
-    template <typename Dispatch = OPENGL_HPP_DEFAULT_DISPATCHER_TYPE>
+    template <typename Dispatch = OPENGL_HPP_DEFAULT_DISPATCHER_TYPE,typename = std::enable_if_t<_is_dispatch_v<Dispatch>, int>>
     void attributeIFormat(GLuint attribindex, GLint size, AttributeType type,
                           GLuint relativeoffset,
                           Dispatch const &d = {
@@ -6449,7 +6600,7 @@ class VertexArray {
                                      static_cast<GLenum>(type), relativeoffset);
     }
 
-    template <typename Dispatch = OPENGL_HPP_DEFAULT_DISPATCHER_TYPE>
+    template <typename Dispatch = OPENGL_HPP_DEFAULT_DISPATCHER_TYPE,typename = std::enable_if_t<_is_dispatch_v<Dispatch>, int>>
     void attributeLFormat(GLuint attribindex, GLint size, AttributeType type,
                           GLuint relativeoffset,
                           Dispatch const &d = {
@@ -6458,14 +6609,14 @@ class VertexArray {
                                      static_cast<GLenum>(type), relativeoffset);
     }
 
-    template <typename Dispatch = OPENGL_HPP_DEFAULT_DISPATCHER_TYPE>
+    template <typename Dispatch = OPENGL_HPP_DEFAULT_DISPATCHER_TYPE,typename = std::enable_if_t<_is_dispatch_v<Dispatch>, int>>
     void bindingDivisor(GLuint bindingindex, GLuint divisor,
                         Dispatch const &d = {
                             OPENGL_HPP_DEFAULT_DISPATCHER}) const {
         d.glVertexArrayBindingDivisor(m_VertexArray, bindingindex, divisor);
     }
 
-    template <typename Dispatch = OPENGL_HPP_DEFAULT_DISPATCHER_TYPE>
+    template <typename Dispatch = OPENGL_HPP_DEFAULT_DISPATCHER_TYPE,typename = std::enable_if_t<_is_dispatch_v<Dispatch>, int>>
     void bindElementBuffer(Buffer const &buffer,
                            Dispatch const &d = {
                                OPENGL_HPP_DEFAULT_DISPATCHER}) const {
@@ -6473,7 +6624,7 @@ class VertexArray {
                                      static_cast<GLuint>(buffer));
     }
 
-    template <typename Dispatch = OPENGL_HPP_DEFAULT_DISPATCHER_TYPE>
+    template <typename Dispatch = OPENGL_HPP_DEFAULT_DISPATCHER_TYPE,typename = std::enable_if_t<_is_dispatch_v<Dispatch>, int>>
     void bindVertexBuffers(GLuint firstBindingIndex,
                            ArrayProxy<const Buffer> const &buffers,
                            ArrayProxy<const GLintptr> const &offsets,
@@ -6492,6 +6643,9 @@ class VertexArray {
     GLuint m_VertexArray;
 };
 
+static_assert(sizeof(VertexArray) == sizeof(VertexArray::handleType));
+static_assert(sizeof(Buffer) == sizeof(Buffer::handleType));
+
 // No index version,static length
 template <typename _Tx, std::size_t N, typename Dispatch, typename>
 inline decltype(auto) get(StateVariables pname, Dispatch const &d) {
@@ -6502,16 +6656,13 @@ inline decltype(auto) get(StateVariables pname, Dispatch const &d) {
         d.glGetFloatv(static_cast<GLenum>(pname), result.data());
     } else if constexpr (std::is_same_v<GLdouble, _Tx>) {
         d.glGetDoublev(static_cast<GLenum>(pname), result.data());
-    } else if constexpr (std::is_same_v<GLboolean, _Tx> ||
-                         std::is_same_v<bool, _Tx>) {
+    } else if constexpr (std::is_same_v<bool, _Tx> ||
+                         std::is_same_v<GLboolean, _Tx>) {
         std::array<GLboolean, N> query{};
         d.glGetBooleanv(static_cast<GLenum>(pname), query.data());
-        std::array<bool, N> boolResult;
-        std::transform(query.cbegin(), query.cend(), boolResult.begin(),
-                       [](const auto &val) { return static_cast<bool>(val); });
-        return ArrayOrObject(boolResult);
+        std::copy(query.cbegin(), query.cend(), result.begin());
     } else if constexpr (std::is_same_v<GLint64, _Tx>) {
-        d.glGetBooleanv(static_cast<GLenum>(pname), result.data());
+        d.glGetInteger64v(static_cast<GLenum>(pname), result.data());
     }
     return ArrayOrObject(result);
 }
@@ -6526,26 +6677,37 @@ inline decltype(auto) get(StateVariables pname, GLuint index,
         d.glGetFloati_v(static_cast<GLenum>(pname), index, result.data());
     } else if constexpr (std::is_same_v<GLdouble, _Tx>) {
         d.glGetDoublei_v(static_cast<GLenum>(pname), index, result.data());
-    } else if constexpr (std::is_same_v<GLboolean, _Tx> ||
-                         std::is_same_v<bool, _Tx>) {
+    } else if constexpr (std::is_same_v<bool, _Tx> ||
+                         std::is_same_v<GLboolean, _Tx>) {
         std::array<GLboolean, N> query{};
         d.glGetBooleani_v(static_cast<GLenum>(pname), index, query.data());
-        std::array<bool, N> boolResult;
-        std::transform(query.cbegin(), query.cend(), boolResult.begin(),
-                       [](const auto &val) { return static_cast<bool>(val); });
-        return ArrayOrObject(boolResult);
+        std::copy(query.cbegin(), query.cend(), result.begin());
     } else if constexpr (std::is_same_v<GLint64, _Tx>) {
-        d.glGetBooleani_v(static_cast<GLenum>(pname), index, result.data());
+        d.glGetInteger64i_v(static_cast<GLenum>(pname), index, result.data());
     }
     return ArrayOrObject(result);
 }
 
-template <typename Dispatch = OPENGL_HPP_DEFAULT_DISPATCHER_TYPE>
+template <typename Dispatch, typename>
+std::string getString(ConnectionState pname, Dispatch const &d) {
+    std::ostringstream sout{};
+    sout << d.glGetString(static_cast<GLenum>(pname));
+    return sout.str();
+}
+
+template <typename Dispatch, typename>
+std::string getString(ConnectionState pname, GLuint index, Dispatch const &d) {
+    std::ostringstream sout{};
+    sout << d.glGetStringi(static_cast<GLenum>(pname), index);
+    return sout.str();
+}
+
+template <typename Dispatch = OPENGL_HPP_DEFAULT_DISPATCHER_TYPE,typename = std::enable_if_t<_is_dispatch_v<Dispatch>, int>>
 inline Error getError(Dispatch const &d = {OPENGL_HPP_DEFAULT_DISPATCHER}) {
     return static_cast<Error>(d.glGetError());
 }
 
-template <typename Dispatch = OPENGL_HPP_DEFAULT_DISPATCHER_TYPE>
+template <typename Dispatch = OPENGL_HPP_DEFAULT_DISPATCHER_TYPE,typename = std::enable_if_t<_is_dispatch_v<Dispatch>, int>>
 inline void bindBuffersBase(Buffer::BindBaseTarget target,
                             GLuint firstBindingIndex,
                             ArrayProxy<const Buffer> const &buffers,
@@ -6558,7 +6720,7 @@ inline void bindBuffersBase(Buffer::BindBaseTarget target,
                         bufferHandles.data());
 }
 
-template <typename Dispatch = OPENGL_HPP_DEFAULT_DISPATCHER_TYPE>
+template <typename Dispatch = OPENGL_HPP_DEFAULT_DISPATCHER_TYPE,typename = std::enable_if_t<_is_dispatch_v<Dispatch>, int>>
 inline void bindBuffersRange(Buffer::BindBaseTarget target,
                              GLuint firstBindingIndex,
                              ArrayProxy<const Buffer> const &buffers,
@@ -6576,9 +6738,9 @@ inline void bindBuffersRange(Buffer::BindBaseTarget target,
 
 // dynamic length
 template <typename T, typename Dispatch, typename>
-inline std::vector<T> createObjectv(GLsizei n, Dispatch const &d) {
+inline std::vector<T> createObject(GLsizei n, Dispatch const &d) {
     assert(n >= 0);
-    std::vector<typename T::handleType> handles(n);
+    std::vector<typename T::handleType> handles(static_cast<std::size_t>(n));
     std::invoke(d.*T::template createFunc<Dispatch>, n, handles.data());
     return std::vector<T>(handles.cbegin(), handles.cend());
 }
@@ -6611,10 +6773,10 @@ inline constexpr decltype(auto) ArrayOrObject(
     }
 }
 
-void initLoader(DispatchLoaderDynamic::PFN_GetProcAddr const & pGetProcAddr){
+void initLoader(DispatchLoaderDynamic::PFN_GetProcAddr const &pGetProcAddr) {
 #if defined(OPENGL_HPP_DISPATCH_LOADER_DYNAMIC)
     OPENGL_HPP_DEFAULT_DISPATCHER = gl::DispatchLoaderDynamic(pGetProcAddr);
-#endif // OPENGL_HPP_DISPATCH_LOADER_DYNAMIC
+#endif  // OPENGL_HPP_DISPATCH_LOADER_DYNAMIC
 }
 
 }  // namespace OPENGL_HPP_NAMESPACE

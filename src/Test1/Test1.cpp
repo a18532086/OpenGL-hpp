@@ -1,6 +1,7 @@
 ﻿
-#include <gl.hpp>
+#define GLFW_INCLUDE_NONE
 #include <GLFW/glfw3.h>
+#include <gl.hpp>
 #include <functional>
 
 #include <iostream>
@@ -32,39 +33,35 @@ class App {
 
         gl::initLoader(glfwGetProcAddress);
 
-        std::cout << OPENGL_HPP_DEFAULT_DISPATCHER.glGetString(GL_VERSION)
-                  << std::endl;
+        GLuint maxExtension = gl::get<int>(gl::StateVariables::eNumExtensions);
 
-        auto vaos = gl::createObjectv<gl::Buffer>(2);
+        for (std::size_t i = 0; i < maxExtension; ++i) {
+            std::cout << gl::getString(gl::ConnectionState::eExtensions, i)
+                      << std::endl;
+        }
+
+        auto blend_color = gl::get<GLfloat,4>(gl::StateVariables::eColorClearValue);
+
+        auto MaxtSize = gl::get<int64_t>(gl::StateVariables::eMax3dTextureSize);
 
         auto vao = gl::createObject<gl::VertexArray>();
 
-        gl::deleteObject<gl::VertexArray>(gl::VertexArray{},
-                                          OPENGL_HPP_DEFAULT_DISPATCHER);
-        vao.destroy();
+        auto ebo = gl::createObject<gl::Buffer>();
 
-        vao.bind();
+        ebo.bind(gl::Buffer::BindTarget::eElementArrayBuffer);
 
-        auto buffers = gl::createObject<gl::Buffer,6>();
+        vao.bindElementBuffer(ebo);
 
-        gl::bindBuffersBase(gl::Buffer::BindBaseTarget::eUniformBuffer, 0, buffers);
+        gl::Error e;
 
-        gl::deleteObject<gl::Buffer>(buffers);
-
-        auto maxUBObinding =
-            gl::get<int>(gl::StateVariables::eMaxUniformBufferBindings);
-
-        std::vector<int> UBObinding(maxUBObinding);
-
-        for (int i = 0; i < maxUBObinding; ++i) {
-            UBObinding[i] =
-                gl::get<int>(gl::StateVariables::eUniformBufferBinding, GLuint(i));
+        while ((e = gl::getError()) != gl::Error::eNoError)
+        {
+            std::cout << gl::to_string(e) << std::endl;
         }
 
-        auto index = gl::get<GLint>(gl::StateVariables::eVertexArrayBinding);
+        gl::deleteObject<gl::VertexArray>(vao);
 
-        auto isDepTest = gl::get<bool>(gl::StateVariables::eDepthTest);
-
+        using k = gl::_member_pointer_extract_class_t<decltype(gl::Buffer::template createFunc<gl::DispatchLoaderDynamic>)>;
     }
     void run() {
         init();

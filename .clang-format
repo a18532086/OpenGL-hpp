@@ -1,4 +1,4 @@
-BasedOnStyle: Google
+BasedOnStyle: Google 
 IndentWidth: 4
 Language: Cpp
 DerivePointerAlignment: false
