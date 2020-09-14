@@ -22,11 +22,9 @@ I will add support to without DSA in a long term.
 To avoid name collisions with the OpenGL C API the C++ bindings reside in the gl namespace. The following rules apply to the new naming.
 Also add some generic supprt
   * `glCreateBuffers(N, ...)` can be accessed as `gl::createObject<Buffer,N>(...)`
-  or `gl::createObjectv<Buffer>(N, ...)`
+  or `gl::createObject<Buffer>(N, ...)`
 
-  * the `gl::createObject` will return a `Buffer` variable if `N` be `1`, else it will return `std::array<Buffer,N>` variable
-
-  * the `gl::createObjectv` will return `std::vector<Buffe>` variable,this version is designed for run-time length variable 
+  * the `gl::createObject` will return `std::vector<Buffer>` variable,this version is designed for run-time length variable 
 
 * Enums are mapped to scoped enums to provide compile time type safety. The names have been changed to 'e' + CamelCase with the GL_ prefix and type infix removed. In case the enum type is an extension the extension suffix has been removed from the enum values.
 
@@ -45,6 +43,15 @@ OpenGL-Hpp declares a class for all handles to ensure full type safety and to ad
 ### C/C++ Interop for Handles
 
 it is recommended to use a `static_cast` for the conversion like this: `GLuint vaoHandle = static_cast<GLuint>(cppVertexArray)` to prevent converting some arbitrary int to a handle or vice versa by accident.
+
+### UltraArray
+`UltraArray` is a template class wrapped std::array, beyond the std::array, it can implicit conversion to `std::array<T,N>` when `N > 1` , to `T` when `N == 1`, also can implicit convert to `std::tuple<T&...>` ,you can easily use with `std::tie`
+
+```c++
+    gl::Shader vs,fs;
+    std::tie(fs,vs) = gl::createObject<gl::Shader>({gl::ShaderType::eFragmentShader,gl::ShaderType::eVertexShader});
+
+```
 
 <!-- ### Flags
 

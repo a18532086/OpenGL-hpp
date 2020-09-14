@@ -5774,6 +5774,7 @@ class DispatchLoaderDynamic {
 #endif /* GL_OVR_multiview2 */
     }
 };
+
 template <typename BitType>
 class Flags {
    public:
@@ -6216,6 +6217,97 @@ constexpr BufferStorageFlags operator^(BufferStorageFlagBits lhs,
     return BufferStorageFlags(lhs) ^ rhs;
 }
 
+template <typename _Tx, std::size_t _Size,
+          std::enable_if_t<(_Size > 0), int> = 0>
+class UltraArray {
+    // 数组转tuple
+    template <typename _Ty, std::size_t N, std::size_t... Idxs>
+    static auto array_to_tuple(std::array<_Ty, N> const &arr,
+        std::index_sequence<Idxs...>) {
+        // remove const to implicit convert to std::tuple<T&,T&...>
+        static_assert(sizeof...(Idxs) == N);
+        return std::tie(*const_cast<_Ty *>(&arr[Idxs])...);
+    }
+
+   public:
+    using value_type = _Tx;
+
+    using array_type = std::array<value_type, _Size>;
+
+    using tuple_type = decltype(
+        array_to_tuple(std::declval<array_type>(),
+                       std::declval<std::make_index_sequence<_Size>>()));
+
+    constexpr UltraArray() = default;
+    template <typename T, typename... Args,
+              std::enable_if_t<std::is_convertible_v<T, value_type>, int> = 0>
+    constexpr UltraArray(T &&firstElem, Args &&... _Elems)
+        : m_Array{std::forward<T>(firstElem), std::forward<Args>(_Elems)...} {}
+    constexpr UltraArray(const array_type &_array) : m_Array(_array) {}
+    constexpr UltraArray(const UltraArray &rhs) : m_Array(rhs.m_Array) {}
+
+    constexpr value_type &operator[](std::size_t _Idx) noexcept {
+        return m_Array.operator[](_Idx);
+    }
+
+    constexpr const value_type &operator[](std::size_t _Idx) const noexcept {
+        return m_Array.operator[](_Idx);
+    }
+
+    constexpr value_type *data() noexcept { return m_Array.data(); }
+
+    constexpr const value_type *data() const noexcept { return m_Array.data(); }
+
+    constexpr value_type *begin() noexcept { return m_Array.data(); }
+
+    constexpr const value_type *begin() const noexcept {
+        return m_Array.data();
+    }
+
+    constexpr value_type *end() noexcept { return m_Array.data() + +_Size; }
+
+    constexpr const value_type *end() const noexcept {
+        return m_Array.data() + _Size;
+    }
+
+    constexpr const value_type *cbegin() const noexcept {
+        return m_Array.data();
+    }
+
+    constexpr const value_type *cend() const noexcept {
+        return m_Array.data() + _Size;
+    }
+
+    constexpr std::size_t size() const noexcept { return _Size; }
+
+    template <std::size_t N = _Size, std::enable_if_t<(N > 1), int> = 0>
+    constexpr operator array_type() const noexcept {
+        return m_Array;
+    }
+
+    template <std::size_t N = _Size, std::enable_if_t<(N == 1), int> = 0>
+    constexpr operator value_type() const noexcept {
+        return m_Array[0];
+    }
+
+    constexpr operator tuple_type() const noexcept {
+        return array_to_tuple(m_Array, std::make_index_sequence<_Size>{});
+    }
+
+    template <std::size_t N = _Size, std::enable_if_t<(N > 1), int> = 0>
+    constexpr array_type to_array() const noexcept {
+        return m_Array;
+    }
+
+    template <std::size_t N = _Size, std::enable_if_t<(N == 1), int> = 0>
+    constexpr value_type to_single() const noexcept {
+        return m_Array[0];
+    }
+
+   private:
+    array_type m_Array{};
+};
+
 template <typename T>
 class ArrayProxy {
    public:
@@ -6304,6 +6396,22 @@ class ArrayProxy {
                    &data) noexcept
         : m_count(data.size()), m_ptr(data.data()) {}
 
+    template <std::size_t N>
+    ArrayProxy(UltraArray<T,N> &data) noexcept
+        : m_count(N), m_ptr(data.data()) {}
+
+    template <std::size_t N>
+    ArrayProxy(UltraArray<T, N> const &data) noexcept
+        : m_count(N), m_ptr(data.data()) {}
+
+    template <std::size_t N>
+    ArrayProxy(UltraArray<std::remove_const_t<T>, N> &data) noexcept
+        : m_count(N), m_ptr(data.data()) {}
+
+    template <std::size_t N>
+    ArrayProxy(UltraArray<std::remove_const_t<T>, N> const &data) noexcept
+        : m_count(N), m_ptr(data.data()) {}
+
     const T *begin() const noexcept { return m_ptr; }
 
     const T *end() const noexcept { return m_ptr + m_count; }
@@ -6328,6 +6436,7 @@ class ArrayProxy {
     std::size_t m_count;
     T *m_ptr;
 };
+
 
 #if !defined(OPENGL_HPP_DISPATCH_LOADER_DYNAMIC)
 #if !defined(GL_GLEXT_PROTOTYPES)
@@ -6374,26 +6483,6 @@ inline OPENGL_HPP_STORAGE_API DispatchLoaderDynamic
 #endif
 #endif
 
-//编译期决定返回数组/单个变量，以方便createObject/get函数的使用
-template <typename _Tx, size_t N>
-constexpr decltype(auto) _ArrayOrObject(std::array<_Tx, N> const &_array) noexcept {
-    if constexpr (N == 1) {
-        return _array[0];
-    } else {
-        return _array;
-    }
-}
-template <typename T, std::size_t N, std::size_t... Vals>
-constexpr decltype(auto) arraytoTuple_helper(std::array<T, N> const &_array, std::index_sequence<Vals...> const &) {
-    return std::make_tuple(_array[Vals]...);
-}
-
-//将数组转换为tuple ，方便tuple式赋值
-template <typename _Tx, size_t N>
-constexpr decltype(auto) arrayToTuple(const std::array<_Tx, N>& _array) noexcept {
-    return arraytoTuple_helper(_array, std::make_index_sequence<N>{});
-}
-
 // No index version,static length
 #if _HAS_CXX20
 template <CanGetType _Tx, std::size_t N = 1,
@@ -6406,8 +6495,8 @@ template <typename _Tx, std::size_t N = 1,
               _is_get_type_v<_Tx> && (N > 0U) && _is_dispatch_v<Dispatch>, int>>
 #endif  // _HAS_CXX20
     auto get(StateVariables pname,
-                       Dispatch const &d = OPENGL_HPP_DEFAULT_DISPATCHER) {
-    std::array<_Tx, N> result{};
+             Dispatch const &d = OPENGL_HPP_DEFAULT_DISPATCHER) {
+    UltraArray<_Tx, N> result{};
     if constexpr (can_use_GLint<_Tx>) {
         std::array<GLint, N> query{};
         d.glGetIntegerv(static_cast<GLenum>(pname), query.data());
@@ -6429,7 +6518,7 @@ template <typename _Tx, std::size_t N = 1,
         d.glGetInteger64v(static_cast<GLenum>(pname), query.data());
         std::copy(query.cbegin(), query.cend(), result.begin());
     }
-    return _ArrayOrObject(result);
+    return result;
 }
 
 #if _HAS_CXX20
@@ -6443,8 +6532,8 @@ template <typename _Tx, std::size_t N = 1,
               _is_get_type_v<_Tx> && (N > 0U) && _is_dispatch_v<Dispatch>, int>>
 #endif  // _HAS_CXX20
     auto get(StateVariables pname, GLuint index,
-                       Dispatch const &d = OPENGL_HPP_DEFAULT_DISPATCHER) {
-    std::array<_Tx, N> result{};
+             Dispatch const &d = OPENGL_HPP_DEFAULT_DISPATCHER) {
+    UltraArray<_Tx, N> result{};
     if constexpr (can_use_GLint<_Tx>) {
         std::array<GLint, N> query{};
         d.glGetIntegeri_v(static_cast<GLenum>(pname), index, query.data());
@@ -6466,7 +6555,7 @@ template <typename _Tx, std::size_t N = 1,
         d.glGetInteger64i_v(static_cast<GLenum>(pname), index, query.data());
         std::copy(query.cbegin(), query.cend(), result.begin());
     }
-    return _ArrayOrObject(result);
+    return result;
 }
 
 #if _HAS_CXX20
@@ -7248,8 +7337,9 @@ template <
     typename = std::enable_if_t<
         (N > 0) && _is_dispatch_v<Dispatch> && _Object_Traits<T>::value, int>>
 #endif  // _HAS_CXX20
-    inline auto createObject(Dispatch const &d = OPENGL_HPP_DEFAULT_DISPATCHER) {
-    std::array<typename T::handleType, N> handles;
+    inline auto createObject(
+        Dispatch const &d = OPENGL_HPP_DEFAULT_DISPATCHER) {
+    UltraArray<typename T::handleType, N> handles;
     if constexpr (std::is_same_v<T, Program>) {
         for (auto &handle : handles) {
             handle = std::invoke(d.*_Object_CreateFunc<T, Dispatch>);
@@ -7257,9 +7347,9 @@ template <
     } else {
         std::invoke(d.*_Object_CreateFunc<T, Dispatch>, N, handles.data());
     }
-    std::array<T, N> result;
+    UltraArray<T, N> result;
     std::copy(handles.cbegin(), handles.cend(), result.begin());
-    return _ArrayOrObject(result);
+    return result;
 }
 
 // dynamic length
@@ -7288,38 +7378,23 @@ inline std::vector<T> createObject(
 
 // Shader 版本
 #if _HAS_CXX20
-template <typename T,
-          Dispatchable Dispatch = OPENGL_HPP_DEFAULT_DISPATCHER_TYPE>
-requires std::is_same_v<T, Shader>
-#else
-template <typename T, typename Dispatch = OPENGL_HPP_DEFAULT_DISPATCHER_TYPE,
-          typename = std::enable_if_t<std::is_same_v<T, Shader>, int>>
-#endif  // _HAS_CXX20
-    inline Shader createObject(
-        ShaderType shadertype,
-        Dispatch const &d = OPENGL_HPP_DEFAULT_DISPATCHER) {
-    return Shader{d.glCreateShader(static_cast<GLenum>(shadertype))};
-}
-
-// Shader 版本
-#if _HAS_CXX20
 template <typename T, std::size_t N,
           Dispatchable Dispatch = OPENGL_HPP_DEFAULT_DISPATCHER_TYPE>
-    requires std::is_same_v<T, Shader> && (N > 1)
+requires (std::is_same_v<T, Shader>)
 #else
 template <typename T, std::size_t N,
           typename Dispatch = OPENGL_HPP_DEFAULT_DISPATCHER_TYPE,
-          typename = std::enable_if_t<std::is_same_v<T, Shader> && (N > 1), int>
-    >
+          typename = std::enable_if_t<std::is_same_v<T, Shader>, int>>
 #endif  // _HAS_CXX20
-    inline auto createObject(const ShaderType (&shadertypes)[N],
-                 Dispatch const &d = OPENGL_HPP_DEFAULT_DISPATCHER) {
-    std::array<Shader, N> shaders{};
+    inline auto createObject(
+        const ShaderType (&shadertypes)[N],
+        Dispatch const &d = OPENGL_HPP_DEFAULT_DISPATCHER) {
+    UltraArray<Shader, N> shaders;
     for (std::size_t i = 0; i < N; ++i) {
         shaders[i] =
             Shader{d.glCreateShader(static_cast<GLenum>(shadertypes[i]))};
     }
-    return _ArrayOrObject(shaders);
+    return shaders;
 }
 
 #if _HAS_CXX20
@@ -7327,8 +7402,8 @@ template <HasCreateAbility T,
           Dispatchable Dispatch = OPENGL_HPP_DEFAULT_DISPATCHER_TYPE>
 #else
 template <typename T, typename Dispatch = OPENGL_HPP_DEFAULT_DISPATCHER_TYPE,
-          std::enable_if_t<
-              _is_dispatch_v<Dispatch> && _Object_Traits<T>::value, int> = 0>
+          std::enable_if_t<_is_dispatch_v<Dispatch> && _Object_Traits<T>::value,
+                           int> = 0>
 #endif  // _HAS_CXX20
 inline void deleteObject(ArrayProxy<const T> const &arrays,
                          Dispatch const &d = OPENGL_HPP_DEFAULT_DISPATCHER) {
@@ -7338,7 +7413,7 @@ inline void deleteObject(ArrayProxy<const T> const &arrays,
             std::invoke(d.*_Object_DeleteFunc<T, Dispatch>, handle);
         }
     } else {
-        std::invoke(d.*_Object_DeteleFunc<T, Dispatch>,
+        std::invoke(d.*_Object_DeleteFunc<T, Dispatch>,
                     static_cast<GLsizei>(arrays.size()), handles.data());
     }
 }

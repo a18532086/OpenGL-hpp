@@ -105,8 +105,9 @@ class App {
 
         gl::Shader fs, vs;
 
-        std::tie(fs, vs) = gl::arrayToTuple(gl::createObject<gl::Shader>(
-            {gl::ShaderType::eFragmentShader, gl::ShaderType::eVertexShader}));
+        std::tie(fs, vs) = gl::createObject<gl::Shader>({gl::ShaderType::eFragmentShader,gl::ShaderType::eVertexShader});
+
+        auto isDepTest = gl::get<bool>(gl::StateVariables::eDepthTest).to_single();
 
         vs.loadSource(VertexShader);
         fs.loadSource(FragShader);
@@ -132,6 +133,8 @@ class App {
         program.use();
 
         d.glEnable(GL_DEPTH_TEST);
+
+        isDepTest = gl::get<bool>(gl::StateVariables::eDepthTest);
 
         d.glDepthFunc(GL_LEQUAL);
     }
