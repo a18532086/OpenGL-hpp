@@ -19,7 +19,7 @@ project (OpenGL-hpp)
 set(EXAMPLES
 	Test_Point_Cloud
 	)
-set(COMMON_LIBS glfw3dll)
+set(COMMON_LIBS glfw3)
 
 # 类的实现文件
 file(GLOB HEADER_IMPL_FILES

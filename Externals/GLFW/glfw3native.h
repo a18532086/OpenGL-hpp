@@ -1,6 +1,6 @@
 /*************************************************************************
  * GLFW 3.3 - www.glfw.org
- * A library for OpenGL, Window and input
+ * A library for OpenGL, window and input
  *------------------------------------------------------------------------
  * Copyright (c) 2002-2006 Marcus Geelnard
  * Copyright (c) 2006-2018 Camilla Löwy <elmindreda@glfw.org>
@@ -168,7 +168,7 @@ GLFWAPI const char* glfwGetWin32Monitor(GLFWmonitor* monitor);
  *
  *  @ingroup native
  */
-GLFWAPI HWND glfwGetWin32Window(GLFWwindow* Window);
+GLFWAPI HWND glfwGetWin32Window(GLFWwindow* window);
 #endif
 
 #if defined(GLFW_EXPOSE_NATIVE_WGL)
@@ -184,7 +184,7 @@ GLFWAPI HWND glfwGetWin32Window(GLFWwindow* Window);
  *
  *  @ingroup native
  */
-GLFWAPI HGLRC glfwGetWGLContext(GLFWwindow* Window);
+GLFWAPI HGLRC glfwGetWGLContext(GLFWwindow* window);
 #endif
 
 #if defined(GLFW_EXPOSE_NATIVE_COCOA)
@@ -214,7 +214,7 @@ GLFWAPI CGDirectDisplayID glfwGetCocoaMonitor(GLFWmonitor* monitor);
  *
  *  @ingroup native
  */
-GLFWAPI id glfwGetCocoaWindow(GLFWwindow* Window);
+GLFWAPI id glfwGetCocoaWindow(GLFWwindow* window);
 #endif
 
 #if defined(GLFW_EXPOSE_NATIVE_NSGL)
@@ -230,7 +230,7 @@ GLFWAPI id glfwGetCocoaWindow(GLFWwindow* Window);
  *
  *  @ingroup native
  */
-GLFWAPI id glfwGetNSGLContext(GLFWwindow* Window);
+GLFWAPI id glfwGetNSGLContext(GLFWwindow* window);
 #endif
 
 #if defined(GLFW_EXPOSE_NATIVE_X11)
@@ -288,7 +288,7 @@ GLFWAPI RROutput glfwGetX11Monitor(GLFWmonitor* monitor);
  *
  *  @ingroup native
  */
-GLFWAPI Window glfwGetX11Window(GLFWwindow* Window);
+GLFWAPI Window glfwGetX11Window(GLFWwindow* window);
 
 /*! @brief Sets the current primary selection to the specified string.
  *
@@ -354,7 +354,7 @@ GLFWAPI const char* glfwGetX11SelectionString(void);
  *
  *  @ingroup native
  */
-GLFWAPI GLXContext glfwGetGLXContext(GLFWwindow* Window);
+GLFWAPI GLXContext glfwGetGLXContext(GLFWwindow* window);
 
 /*! @brief Returns the `GLXWindow` of the specified window.
  *
@@ -368,7 +368,7 @@ GLFWAPI GLXContext glfwGetGLXContext(GLFWwindow* Window);
  *
  *  @ingroup native
  */
-GLFWAPI GLXWindow glfwGetGLXWindow(GLFWwindow* Window);
+GLFWAPI GLXWindow glfwGetGLXWindow(GLFWwindow* window);
 #endif
 
 #if defined(GLFW_EXPOSE_NATIVE_WAYLAND)
@@ -412,7 +412,7 @@ GLFWAPI struct wl_output* glfwGetWaylandMonitor(GLFWmonitor* monitor);
  *
  *  @ingroup native
  */
-GLFWAPI struct wl_surface* glfwGetWaylandWindow(GLFWwindow* Window);
+GLFWAPI struct wl_surface* glfwGetWaylandWindow(GLFWwindow* window);
 #endif
 
 #if defined(GLFW_EXPOSE_NATIVE_EGL)
@@ -442,7 +442,7 @@ GLFWAPI EGLDisplay glfwGetEGLDisplay(void);
  *
  *  @ingroup native
  */
-GLFWAPI EGLContext glfwGetEGLContext(GLFWwindow* Window);
+GLFWAPI EGLContext glfwGetEGLContext(GLFWwindow* window);
 
 /*! @brief Returns the `EGLSurface` of the specified window.
  *
@@ -456,7 +456,7 @@ GLFWAPI EGLContext glfwGetEGLContext(GLFWwindow* Window);
  *
  *  @ingroup native
  */
-GLFWAPI EGLSurface glfwGetEGLSurface(GLFWwindow* Window);
+GLFWAPI EGLSurface glfwGetEGLSurface(GLFWwindow* window);
 #endif
 
 #if defined(GLFW_EXPOSE_NATIVE_OSMESA)
@@ -479,7 +479,7 @@ GLFWAPI EGLSurface glfwGetEGLSurface(GLFWwindow* Window);
  *
  *  @ingroup native
  */
-GLFWAPI int glfwGetOSMesaColorBuffer(GLFWwindow* Window, int* width, int* height, int* format, void** buffer);
+GLFWAPI int glfwGetOSMesaColorBuffer(GLFWwindow* window, int* width, int* height, int* format, void** buffer);
 
 /*! @brief Retrieves the depth buffer associated with the specified window.
  *
@@ -500,7 +500,7 @@ GLFWAPI int glfwGetOSMesaColorBuffer(GLFWwindow* Window, int* width, int* height
  *
  *  @ingroup native
  */
-GLFWAPI int glfwGetOSMesaDepthBuffer(GLFWwindow* Window, int* width, int* height, int* bytesPerValue, void** buffer);
+GLFWAPI int glfwGetOSMesaDepthBuffer(GLFWwindow* window, int* width, int* height, int* bytesPerValue, void** buffer);
 
 /*! @brief Returns the `OSMesaContext` of the specified window.
  *
@@ -514,7 +514,7 @@ GLFWAPI int glfwGetOSMesaDepthBuffer(GLFWwindow* Window, int* width, int* height
  *
  *  @ingroup native
  */
-GLFWAPI OSMesaContext glfwGetOSMesaContext(GLFWwindow* Window);
+GLFWAPI OSMesaContext glfwGetOSMesaContext(GLFWwindow* window);
 #endif
 
 #ifdef __cplusplus
