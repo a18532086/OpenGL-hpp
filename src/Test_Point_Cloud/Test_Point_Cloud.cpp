@@ -173,8 +173,14 @@ class App {
         {
             std::ifstream plyFile("bun_zipper.ply");
             std::string buf{};
-            plyFile >> pointsCount;
-            plyFile.ignore(std::numeric_limits<std::streamsize>::max(), '\n');
+            constexpr auto& kPrefix = "element vertex";
+            do {
+                std::getline(plyFile, buf);
+                if (buf.find(kPrefix) != std::string::npos) {
+                    pointsCount = std::atoi(buf.data() + std::size(kPrefix));
+                }
+
+            } while (buf.find("end_header") == std::string::npos);
             points.resize(pointsCount);
             for (std::size_t i = 0; i < pointsCount; ++i) {
                 std::getline(plyFile, buf);
