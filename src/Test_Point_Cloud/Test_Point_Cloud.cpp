@@ -2,6 +2,7 @@
 #include <gl.hpp>
 #define GLFW_INCLUDE_NONE
 #include <GLFW/glfw3.h>
+#include <Utils\WindowUtils.h>
 
 #include <chrono>
 #include <fstream>
@@ -41,24 +42,23 @@ std::string FragShader = R"(
     }
 )";
 
-class App {
+class App : public WindowUtils::App {
    private:
-    GLFWwindow *window;
     gl::VertexArray vao;
     gl::Buffer vbo;
     gl::Buffer MVPUBObject;
-    gl::Program program;
-    std::size_t pointsCount;
+    gl::Program fwdProgram;
+    std::size_t primitivesCount;
 
-    struct {
+    struct ST_MVP {
         glm::mat4 model;
         glm::mat4 view;
         glm::mat4 proj;
     } mvp;
 
-    decltype(mvp) *mappedMVP;
+    ST_MVP *mappedMVP;
     static constexpr auto &d = OPENGL_HPP_DEFAULT_DISPATCHER;
-    void draw() {
+    void render() {
         d.glClearColor(0.0f, 0.0f, 0.0f, 0.0f);
         d.glClear(GL_DEPTH_BUFFER_BIT | GL_COLOR_BUFFER_BIT);
         d.glPointSize(1.0f);
@@ -87,27 +87,30 @@ class App {
 
         MVPUBObject.flushMappedRange(0, sizeof(mvp));
 
-        d.glDrawArrays(GL_POINTS, 0, pointsCount);
-    }
-    void mainLoop() {
-        while (!glfwWindowShouldClose(window)) {
-            draw();
-            glfwSwapBuffers(window);
-            glfwPollEvents();
-        }
+        d.glDrawArrays(GL_POINTS, 0, primitivesCount);
     }
 
    public:
-    int w;
-    int h;
+    App()
+        : WindowUtils::App(this),
+          primitivesCount(),
+          mvp(),
+          vao(),
+          vbo(),
+          MVPUBObject(),
+          mappedMVP(),
+          fwdProgram()
+    {}
     void initShader() {
-        program = gl::createObject<gl::Program>();
+        fwdProgram = gl::createObject<gl::Program>();
 
         gl::Shader fs, vs;
 
-        std::tie(fs, vs) = gl::createObject<gl::Shader>({gl::ShaderType::eFragmentShader,gl::ShaderType::eVertexShader});
+        std::tie(fs, vs) = gl::createObject<gl::Shader>(
+            {gl::ShaderType::eFragmentShader, gl::ShaderType::eVertexShader});
 
-        auto isDepTest = gl::get<bool>(gl::StateVariables::eDepthTest).to_single();
+        bool isDepTest =
+            gl::get<bool>(gl::StateVariables::eDepthTest);
 
         vs.loadSource(VertexShader);
         fs.loadSource(FragShader);
@@ -121,16 +124,16 @@ class App {
         std::cout << "Fragment Shader Compile Info Log:\n"
                   << fs.getInfoLog() << std::endl;
 
-        program.attachShaders({vs, fs});
+        fwdProgram.attachShaders({vs, fs});
 
-        program.link();
+        fwdProgram.link();
 
         gl::deleteObject<gl::Shader>({vs, fs});
 
         std::cout << "Program Link Info Log:\n"
-                  << program.getInfoLog() << std::endl;
+                  << fwdProgram.getInfoLog() << std::endl;
 
-        program.use();
+        fwdProgram.use();
 
         d.glEnable(GL_DEPTH_TEST);
 
@@ -138,32 +141,15 @@ class App {
 
         d.glDepthFunc(GL_LEQUAL);
     }
-    void initWindow() {
-        if (glfwInit() != GLFW_TRUE) {
-            throw std::runtime_error("can not init GLFW !");
-        }
-        glfwWindowHint(GLFW_CONTEXT_VERSION_MAJOR, 4);
-        glfwWindowHint(GLFW_CONTEXT_VERSION_MINOR, 6);
-        if (!(window = glfwCreateWindow(800, 800, "test", nullptr, nullptr))) {
-            throw std::runtime_error("can not create window !");
-        }
-
-        w = 800;
-        h = 800;
-
-        glfwMakeContextCurrent(window);
-
-        glfwSetWindowUserPointer(window, this);
-
+    void init() {
         glfwSetWindowSizeCallback(window, [](GLFWwindow *window, int w, int h) {
             App *app =
                 reinterpret_cast<App *>(glfwGetWindowUserPointer(window));
             app->w = w;
             app->h = h;
         });
-    }
-    void init() {
-        initWindow();
+
+        glfwSetWindowUserPointer(window, this);
 
         gl::initLoader(glfwGetProcAddress);
 
@@ -173,16 +159,16 @@ class App {
         {
             std::ifstream plyFile("bun_zipper.ply");
             std::string buf{};
-            constexpr auto& kPrefix = "element vertex";
+            constexpr auto &kPrefix = "element vertex";
             do {
                 std::getline(plyFile, buf);
                 if (buf.find(kPrefix) != std::string::npos) {
-                    pointsCount = std::atoi(buf.data() + std::size(kPrefix));
+                    primitivesCount = std::atoi(buf.data() + std::size(kPrefix));
                 }
 
             } while (buf.find("end_header") == std::string::npos);
-            points.resize(pointsCount);
-            for (std::size_t i = 0; i < pointsCount; ++i) {
+            points.resize(primitivesCount);
+            for (std::size_t i = 0; i < primitivesCount; ++i) {
                 std::getline(plyFile, buf);
                 std::istringstream(buf) >> points[i].x >> points[i].y >>
                     points[i].z;
@@ -232,10 +218,6 @@ class App {
             std::cout << gl::to_string(e) << std::endl;
         }
     }
-    void run() {
-        init();
-        mainLoop();
-    }
 };
 int main() {
     try {
@@ -244,6 +226,5 @@ int main() {
     } catch (std::exception &e) {
         std::cerr << e.what() << std::endl;
     }
-
     return 0;
 }

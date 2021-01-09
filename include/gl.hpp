@@ -56,10 +56,10 @@ constexpr bool can_use_GLdouble = std::is_floating_point_v<T> &&
 
 // store createFunc and deleteFunc
 template <typename T>
-struct _Object_Traits : std::false_type {};
-
-template <typename T>
-constexpr bool _Object_Traits_v = _Object_Traits<T>::value;
+struct _Object_Traits {
+    static constexpr bool canCreate = false;
+    static constexpr bool canDelete = false;
+};
 
 template <typename T, typename Dispatch>
 constexpr auto _Object_CreateFunc =
@@ -68,6 +68,12 @@ constexpr auto _Object_CreateFunc =
 template <typename T, typename Dispatch>
 constexpr auto _Object_DeleteFunc =
     _Object_Traits<T>::template deleteFunc<Dispatch>;
+
+template <typename T>
+constexpr bool _Object_Can_Create_v = _Object_Traits<T>::canCreate;
+
+template <typename T>
+constexpr bool _Object_Can_Delete_v = _Object_Traits<T>::canDelete;
 
 #if _HAS_CXX20  // use concept
 // determine whether T is Dispatchable, which must have a member name
@@ -81,10 +87,10 @@ concept CanGetType =
     can_use_GLint<T> || can_use_GLint64<T>;
 
 template <typename T>
-concept HasCreateAbility = _Object_Traits_v<T>;
+concept HasCreateAbility = _Object_Can_Create_v<T>;
 
-template <GLsizei N>
-concept Postivable = N > 0;
+template <typename T>
+concept HasDeleteAbility = _Object_Can_Delete_v<T>;
 
 #else  // use SFINAE
 // determine whether T is a dispatch, which must have a member name glGetString
@@ -6223,7 +6229,7 @@ class UltraArray {
     // 数组转tuple
     template <typename _Ty, std::size_t N, std::size_t... Idxs>
     static auto array_to_tuple(std::array<_Ty, N> const &arr,
-        std::index_sequence<Idxs...>) {
+                               std::index_sequence<Idxs...>) {
         // remove const to implicit convert to std::tuple<T&,T&...>
         static_assert(sizeof...(Idxs) == N);
         return std::tie(*const_cast<_Ty *>(&arr[Idxs])...);
@@ -6397,7 +6403,7 @@ class ArrayProxy {
         : m_count(data.size()), m_ptr(data.data()) {}
 
     template <std::size_t N>
-    ArrayProxy(UltraArray<T,N> &data) noexcept
+    ArrayProxy(UltraArray<T, N> &data) noexcept
         : m_count(N), m_ptr(data.data()) {}
 
     template <std::size_t N>
@@ -6436,7 +6442,6 @@ class ArrayProxy {
     std::size_t m_count;
     T *m_ptr;
 };
-
 
 #if !defined(OPENGL_HPP_DISPATCH_LOADER_DYNAMIC)
 #if !defined(GL_GLEXT_PROTOTYPES)
@@ -7125,7 +7130,7 @@ class VertexArray {
                            Dispatch const &d = {
                                OPENGL_HPP_DEFAULT_DISPATCHER}) const {
         d.glVertexArrayElementBuffer(
-            m_VertexArray, static_cast<gl::Buffer::handleType>(buffer));
+            m_VertexArray, static_cast<Buffer::handleType>(buffer));
     }
 
 #if _HAS_CXX20
@@ -7142,12 +7147,25 @@ class VertexArray {
                                OPENGL_HPP_DEFAULT_DISPATCHER}) const {
         assert(buffers.size() == offsets.size() &&
                buffers.size() == strides.size());
-        std::vector<handleType> vbos(buffers.begin(), buffers.end());
+        std::vector<Buffer::handleType> vbos(buffers.begin(),
+                                                 buffers.end());
         d.glVertexArrayVertexBuffers(
             m_VertexArray, firstBindingIndex, static_cast<GLsizei>(vbos.size()),
             vbos.data(), offsets.data(), strides.data());
     }
-
+#if _HAS_CXX20
+    template <Dispatchable Dispatch = OPENGL_HPP_DEFAULT_DISPATCHER_TYPE>
+#else
+    template <typename Dispatch = OPENGL_HPP_DEFAULT_DISPATCHER_TYPE,
+              typename = std::enable_if_t<_is_dispatch_v<Dispatch>, int>>
+#endif  // _HAS_CXX20
+    void bindVertexBuffer(GLuint bindingindex, const Buffer& buffer,
+                           GLintptr offset, GLsizei stride,
+                           Dispatch const &d = {
+                               OPENGL_HPP_DEFAULT_DISPATCHER}) const {
+        d.glVertexArrayVertexBuffer(m_VertexArray, bindingindex,
+                                    static_cast<Buffer::handleType>(buffer), offset, stride);
+    }
    private:
     handleType m_VertexArray;
 };
@@ -7293,30 +7311,39 @@ class Program {
 };
 
 template <>
-struct _Object_Traits<Buffer> : std::true_type {
+struct _Object_Traits<Buffer> {
     template <typename Dispatch>
     static constexpr auto createFunc = &Dispatch::glCreateBuffers;
 
     template <typename Dispatch>
     static constexpr auto deleteFunc = &Dispatch::glDeleteBuffers;
+
+    static constexpr bool canCreate = true;
+    static constexpr bool canDelete = true;
 };
 
 template <>
-struct _Object_Traits<VertexArray> : std::true_type {
+struct _Object_Traits<VertexArray> {
     template <typename Dispatch>
     static constexpr auto createFunc = &Dispatch::glCreateVertexArrays;
 
     template <typename Dispatch>
     static constexpr auto deleteFunc = &Dispatch::glDeleteVertexArrays;
+
+    static constexpr bool canCreate = true;
+    static constexpr bool canDelete = true;
 };
 
 template <>
-struct _Object_Traits<Program> : std::true_type {
+struct _Object_Traits<Program> {
     template <typename Dispatch>
     static constexpr auto createFunc = &Dispatch::glCreateProgram;
 
     template <typename Dispatch>
     static constexpr auto deleteFunc = &Dispatch::glDeleteProgram;
+
+    static constexpr bool canCreate = true;
+    static constexpr bool canDelete = true;
 };
 static_assert(sizeof(VertexArray) == sizeof(VertexArray::handleType));
 static_assert(sizeof(Buffer) == sizeof(Buffer::handleType));
@@ -7335,7 +7362,7 @@ template <
     typename T, GLsizei N = 1,
     typename Dispatch = OPENGL_HPP_DEFAULT_DISPATCHER_TYPE,
     typename = std::enable_if_t<
-        (N > 0) && _is_dispatch_v<Dispatch> && _Object_Traits<T>::value, int>>
+        (N > 0) && _is_dispatch_v<Dispatch> && _Object_Can_Create_v<T>, int>>
 #endif  // _HAS_CXX20
     inline auto createObject(
         Dispatch const &d = OPENGL_HPP_DEFAULT_DISPATCHER) {
@@ -7360,7 +7387,7 @@ template <HasCreateAbility T,
 #else
 template <typename T, typename Dispatch = OPENGL_HPP_DEFAULT_DISPATCHER_TYPE,
           typename = std::enable_if_t<
-              _is_dispatch_v<Dispatch> && _Object_Traits<T>::value, int>>
+              _is_dispatch_v<Dispatch> && _Object_Can_Create_v<T>, int>>
 #endif  // _HAS_CXX20
 inline std::vector<T> createObject(
     GLsizei n, Dispatch const &d = OPENGL_HPP_DEFAULT_DISPATCHER) {
@@ -7380,7 +7407,7 @@ inline std::vector<T> createObject(
 #if _HAS_CXX20
 template <typename T, std::size_t N,
           Dispatchable Dispatch = OPENGL_HPP_DEFAULT_DISPATCHER_TYPE>
-requires (std::is_same_v<T, Shader>)
+requires(std::is_same_v<T, Shader>)
 #else
 template <typename T, std::size_t N,
           typename Dispatch = OPENGL_HPP_DEFAULT_DISPATCHER_TYPE,
@@ -7398,11 +7425,11 @@ template <typename T, std::size_t N,
 }
 
 #if _HAS_CXX20
-template <HasCreateAbility T,
+template <HasDeleteAbility T,
           Dispatchable Dispatch = OPENGL_HPP_DEFAULT_DISPATCHER_TYPE>
 #else
 template <typename T, typename Dispatch = OPENGL_HPP_DEFAULT_DISPATCHER_TYPE,
-          std::enable_if_t<_is_dispatch_v<Dispatch> && _Object_Traits<T>::value,
+          std::enable_if_t<_is_dispatch_v<Dispatch> && _Object_Can_Delete_v<T>,
                            int> = 0>
 #endif  // _HAS_CXX20
 inline void deleteObject(ArrayProxy<const T> const &arrays,
