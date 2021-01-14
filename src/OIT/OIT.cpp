@@ -58,9 +58,9 @@ std::string FragShader = R"(
     in VS_OUT{
         vec4 color; 
     }vs_in;
-    out vec4 color;
+    //out vec4 color;
     void main(){
-        color = vec4(vs_in.color);
+        vec4 color = vec4(vs_in.color);
         //计数器原子地加一，则代表Shader Storage Buffer上的对应内存被allocate
         uint now_idx = atomicAdd(map_heap_cnt,1);
         //与头指针交换，此处有出现last_ptr > now_idx的可能性，原因是在分配idx时该shader还快过其他shader，而在交换头指针时慢于其他后分配的shader，可以用Nsight、RenderDoc等调试工具查看list_buffer
@@ -72,8 +72,6 @@ std::string FragShader = R"(
         item.packedColor2 = packUnorm2x16(color.zw);
         item.packedDepth = floatBitsToUint(gl_FragCoord.z);
         list_buffer[now_idx] = item;
-        // 为了进行左右对比
-        if (gl_FragCoord.x > screenSize.x / 2.0) discard;
     }
 )";
 
@@ -81,8 +79,8 @@ std::string VertexShader2 = R"(
     #version 450
     void main(){
         vec2[] points = vec2[](
-                        vec2(-0.0,1.0),
-                        vec2(-0.0,-1.0),
+                        vec2(-1.0,1.0),
+                        vec2(-1.0,-1.0),
                         vec2(1.0,1.0),
                         vec2(1.0,-1.0)
                         );
@@ -216,6 +214,7 @@ class App : public WindowUtils::App {
     gl::Buffer ebo;
     gl::Buffer MVPUBObject;
     gl::Buffer sourceInitBuffer;
+    gl::Buffer sourceInitCntBuffer;
     gl::Buffer linkListBuffer;
     gl::Buffer headBuffer;
     gl::Buffer heapBuffer;
@@ -248,30 +247,45 @@ class App : public WindowUtils::App {
             glm::translate(glm::mat4(1.0f), glm::vec3(0.0f, 0.0f, 0.0f)) *
             glm::scale(glm::mat4{1.0f}, glm::vec3{2.3f});
 
-        glm::vec3 lookAtPos =
-            glm::rotate(
-                glm::mat4{1.0f},
-                glm::radians(
-                    0.01f *
-                    std::chrono::duration_cast<std::chrono::milliseconds>(
-                        std::chrono::steady_clock::now().time_since_epoch())
-                        .count()),
-                glm::vec3(0.0f, 1.0f, 0.0f)) *
-            glm::vec4(0.0f, 0.0f, -6.0f, 1.0f);
+        static auto lastTime = std::chrono::high_resolution_clock::now();
+
+        auto deltaTime = std::chrono::high_resolution_clock::now() - lastTime;
+
+        lastTime += deltaTime;
+
+        auto lfDeltaTime =
+            std::chrono::duration_cast<std::chrono::duration<double>>(deltaTime)
+                .count();
+
+        static auto glfwLastTime = glfwGetTime();
+
+        auto glfwDeltaTime = glfwGetTime() - glfwLastTime;
+
+        glfwLastTime += glfwDeltaTime;
+
+        static float glfwCurTime = 0.0f;
+        static float curTime = 0.0f;
+
+        glfwCurTime += glfwDeltaTime;
+
+        curTime += lfDeltaTime;
+
+        static glm::mat4 rotationMat(1.0f);
+
+        rotationMat = glm::rotate(
+            rotationMat, glm::radians(22.0f * static_cast<float>(lfDeltaTime)),
+            glm::vec3(0.0f, 1.0f, 0.0f));
+
+        glm::vec3 lookAtPos = rotationMat * glm::vec4(0.0f, 0.0f, -6.0f, 1.0f);
 
         mvp.view = glm::lookAt(lookAtPos, glm::vec3(0.0f),
                                glm::vec3(0.0f, 1.0f, 0.0f));
 
-        d.glMemoryBarrier(GL_UNIFORM_BARRIER_BIT);
-
         *mappedMVP = mvp;
 
-        //同步，以防在上一个drawcall未完成之前将计数器清零
-
-        d.glClientWaitSync(sync, GL_SYNC_FLUSH_COMMANDS_BIT,
-                           GL_TIMEOUT_IGNORED);
-
-        *pMapHeapCnt = 0;
+        d.glCopyNamedBufferSubData(static_cast<GLuint>(sourceInitCntBuffer),
+                                   static_cast<GLuint>(heapPointerBuffer), 0, 0,
+                                   sizeof(GLuint));
 
         //重置头指针
 
@@ -287,15 +301,17 @@ class App : public WindowUtils::App {
 
         //若将此Barrier注释掉，在流处理器较多的设备上会出现错误的渲染，原因是在上个draw中仍未建立完链表，计数器就被清零，用barrier而不用fence是为了更好的性能
 
-        d.glMemoryBarrier(GL_SHADER_STORAGE_BARRIER_BIT);
+        // d.glMemoryBarrier(GL_SHADER_STORAGE_BARRIER_BIT);
 
-        *pMapHeapCnt = 0;
+        d.glCopyNamedBufferSubData(static_cast<GLuint>(sourceInitCntBuffer),
+                                   static_cast<GLuint>(heapPointerBuffer), 0, 0,
+                                   sizeof(GLuint));
 
         lastProgram.use();
 
         d.glDrawArrays(GL_TRIANGLE_STRIP, 0, 4);
 
-        sync = d.glFenceSync(GL_SYNC_GPU_COMMANDS_COMPLETE, 0);
+        // sync = d.glFenceSync(GL_SYNC_GPU_COMMANDS_COMPLETE, 0);
 
         // d.glFinish();
     }
@@ -334,12 +350,24 @@ class App : public WindowUtils::App {
 
         whUniformBuffer.bindBase(gl::BufferBindBaseTarget::eUniformBuffer, 1);
 
-        {
-            auto pBuffer =
-                sourceInitBuffer.map<GLuint *>(gl::BufferAccess::eWriteOnly);
-            std::memset(pBuffer, 0xff, pixelCnts * sizeof(GLuint));
-            sourceInitBuffer.unmap();
-        }
+        static constexpr GLint kNegativeOne = 0xffffffff;
+
+        d.glClearNamedBufferSubData(
+            static_cast<gl::Buffer::handleType>(sourceInitBuffer), GL_R32I, 0,
+            pixelCnts * sizeof(GLuint), GL_RED_INTEGER, GL_INT, &kNegativeOne);
+
+        gl::Buffer pbo = gl::createObject<gl::Buffer>();
+
+        pbo.bind(gl::BufferBindTarget::ePixelPackBuffer);
+
+        pbo.initData(pixelCnts * sizeof(GLuint), nullptr,
+                     gl::BufferUsage::eStaticDraw);
+
+        static constexpr GLuint kNegative = 0xfafbfcfd;
+
+        d.glClearBufferSubData(GL_PIXEL_PACK_BUFFER, GL_R32UI, 0,
+                               pixelCnts * sizeof(GLuint), GL_RED_INTEGER,
+                               GL_UNSIGNED_INT, &kNegative);
     }
     void destroyBuffer() {
         gl::deleteObject<gl::Buffer>({headBuffer, linkListBuffer,
@@ -454,8 +482,8 @@ class App : public WindowUtils::App {
 
         std::tie(vao, emptyVao) = gl::createObject<gl::VertexArray, 2>();
 
-        std::tie(vbo, ebo, heapPointerBuffer, MVPUBObject) =
-            gl::createObject<gl::Buffer, 4>();
+        std::tie(vbo, ebo, heapPointerBuffer, MVPUBObject,
+                 sourceInitCntBuffer) = gl::createObject<gl::Buffer, 5>();
 
         GLsizeiptr pointsSize = sizeof(vertices[0]) * vertices.size();
         GLsizeiptr indicesSize =
@@ -470,11 +498,18 @@ class App : public WindowUtils::App {
         ebo.createStorage(indicesSize, vertexIndices.data(),
                           gl::BufferStorageFlagBits::eMapReadBit);
 
+        GLuint zero = 0;
+
+        sourceInitCntBuffer.createStorage(sizeof(zero), &zero,
+                                          gl::BufferStorageFlags(0));
+
         auto flags = gl::BufferStorageFlagBits::eMapPersistentBit |
                      gl::BufferStorageFlagBits::eMapWriteBit |
-                     gl::BufferStorageFlagBits::eMapCoherentBit | gl::BufferStorageFlagBits::eDynamicStorageBit;
+                     gl::BufferStorageFlagBits::eMapCoherentBit |
+                     gl::BufferStorageFlagBits::eDynamicStorageBit;
 
-        heapPointerBuffer.createStorage(sizeof(GLuint), nullptr, flags);
+        heapPointerBuffer.createStorage(sizeof(GLuint), nullptr,
+                                        gl::BufferStorageFlags(0));
 
         heapPointerBuffer.bindBase(
             gl::BufferBindBaseTarget::eShaderStorageBuffer, 3);
@@ -506,9 +541,6 @@ class App : public WindowUtils::App {
                         gl::BufferAccessFlagBits::eMapWriteBit |
                         gl::BufferAccessFlagBits::eMapCoherentBit;
         mappedMVP = MVPUBObject.mapRange<ST_MVP *>(0, sizeof(ST_MVP), mapFlags);
-
-        pMapHeapCnt =
-            heapPointerBuffer.mapRange<GLuint *>(0, sizeof(GLuint), mapFlags);
 
         initBuffer();
 
