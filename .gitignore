@@ -42,7 +42,7 @@ x86/
 [Aa][Rr][Mm]/
 [Aa][Rr][Mm]64/
 bld/
-[Bb]in/
+# [Bb]in/
 [Oo]bj/
 [Ll]og/
 [Ll]ogs/
@@ -114,6 +114,9 @@ StyleCopReport.xml
 
 # Chutzpah Test files
 _Chutzpah*
+*.csv
+*.exe
+[Bb]in/CodeAnalysis
 
 # Visual C++ cache files
 ipch/
@@ -375,3 +378,4 @@ MigrationBackup/
 
 # Fody - auto-generated XML schema
 FodyWeavers.xsd
+/cmout

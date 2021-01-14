@@ -45,10 +45,12 @@ std::string FragShader = R"(
         uint packedDepth;
         
     };
-    layout (binding = 1, std430) buffer writeonly SSLK {
+    layout (binding = 1, std430) writeonly buffer SSLK {
         My_Node list_buffer[];
     };
-    layout (binding = 0, offset = 0) uniform atomic_uint idx_cnt;
+    layout (binding = 3, std430) buffer SSCnt {
+        uint map_heap_cnt;
+    };
     layout (binding = 1, std140) uniform UB_ScreenSize {
         ivec2 screenSize;
     };
@@ -56,16 +58,22 @@ std::string FragShader = R"(
     in VS_OUT{
         vec4 color; 
     }vs_in;
+    out vec4 color;
     void main(){
-        vec4 color = vec4(vs_in.color);
-        uint now_idx = atomicCounterIncrement(idx_cnt);
-        int last_ptr = atomicExchange(head_pointer[int(gl_FragCoord.x + gl_FragCoord.y * screenSize.x)],int(now_idx));
+        color = vec4(vs_in.color);
+        //计数器原子地加一，则代表Shader Storage Buffer上的对应内存被allocate
+        uint now_idx = atomicAdd(map_heap_cnt,1);
+        //与头指针交换，此处有出现last_ptr > now_idx的可能性，原因是在分配idx时该shader还快过其他shader，而在交换头指针时慢于其他后分配的shader，可以用Nsight、RenderDoc等调试工具查看list_buffer
+        int last_ptr = atomicExchange(head_pointer[int(gl_FragCoord) + int(gl_FragCoord.y) * screenSize.x],int(now_idx));
         My_Node item;
         item.last_ptr = last_ptr;
+        // 4个32位，正好一个vec4的大小，不用浪费padding的空间，颜色被打到两个32位中
         item.packedColor1 = packUnorm2x16(color.xy);
         item.packedColor2 = packUnorm2x16(color.zw);
         item.packedDepth = floatBitsToUint(gl_FragCoord.z);
         list_buffer[now_idx] = item;
+        // 为了进行左右对比
+        if (gl_FragCoord.x > screenSize.x / 2.0) discard;
     }
 )";
 
@@ -73,8 +81,8 @@ std::string VertexShader2 = R"(
     #version 450
     void main(){
         vec2[] points = vec2[](
-                        vec2(-1.0,1.0),
-                        vec2(-1.0,-1.0),
+                        vec2(-0.0,1.0),
+                        vec2(-0.0,-1.0),
                         vec2(1.0,1.0),
                         vec2(1.0,-1.0)
                         );
@@ -84,7 +92,7 @@ std::string VertexShader2 = R"(
 
 std::string FragShader2 = R"(
     #version 450
-    layout (binding = 0, std430) buffer readonly SSHead {
+    layout (binding = 0, std430) readonly buffer SSHead {
         int head_pointer[];
     };
     struct My_Node{
@@ -93,12 +101,15 @@ std::string FragShader2 = R"(
         uint packedColor2;
         uint packedDepth;
     };
-    layout (binding = 1, std430) buffer readonly SSLK {
+    layout (binding = 1, std430) readonly buffer SSLK {
         My_Node list_buffer[];
     };
+    // 映射数组，将链表转换为连续内存是不用保存原来的Node，只保存对应的index，以节省空间
     layout (binding = 2, std430) buffer SSHeap {
-        uint map_heap_cnt;
         uint map_heap[];
+    };
+    layout (binding = 3, std430) buffer SSCnt {
+        uint map_heap_cnt;
     };
     layout (binding = 1, std140) uniform UB_ScreenSize {
         ivec2 screenSize;
@@ -110,16 +121,18 @@ std::string FragShader2 = R"(
     #define depth_unpack(x) uintBitsToFloat(list_buffer[map_heap[x]].packedDepth)
     #define color_unpack(x) vec4(unpackUnorm2x16(list_buffer[map_heap[x]].packedColor1), unpackUnorm2x16(list_buffer[map_heap[x]].packedColor2))
     
+    // 可在此修改比较函数
     bool cmp_function(uint lhs, uint rhs){
         return depth_unpack(lhs) > depth_unpack(rhs);
     }
-    
-    
+
     void swap(inout uint lhs,inout uint rhs){
         uint tmp = rhs;
         rhs = lhs;
         lhs = tmp;
     }
+
+    //非递归的堆排序实现，适合Shader Language
     void max_heapify(uint i, uint n, uint st){
         uint largest = i;
         do{
@@ -148,14 +161,17 @@ std::string FragShader2 = R"(
             max_heapify(st, i - 1, st);
         }
     }
+    // 通过链表建立连续内存
     void build_max_heap_array(out uint st, out uint ed){
-        int pHead = head_pointer[int(gl_FragCoord.x + gl_FragCoord.y * screenSize.x)];
+        int pHead = head_pointer[int(gl_FragCoord) + int(gl_FragCoord.y) * screenSize.x];
         int pIdx = pHead;
         uint cnt = 0;
+        // 先遍历一遍，统计链表的长度，以便分配内存
         while(pIdx != -1){
             ++cnt;
             pIdx = list_buffer[pIdx].last_ptr;
         }
+        // 同上个fragment shader，将堆指针增加cnt位，即是在map_heap上分配了cnt个元素的空间
         st = atomicAdd(map_heap_cnt, cnt);
         ed = st + cnt;
         pIdx = pHead;
@@ -165,9 +181,11 @@ std::string FragShader2 = R"(
             pIdx = list_buffer[pIdx].last_ptr;
         }
     }
+    // 混合函数
     vec4 blend(vec4 src, vec4 dst){
         return mix(dst, src , src.a);
     }
+    // 冒泡排序
     void bubble_sort(uint st,uint ed){
         for (uint i = st;i < ed;++i){
             for (uint j = i + 1;j < ed;++j){
@@ -193,6 +211,7 @@ std::string FragShader2 = R"(
 class App : public WindowUtils::App {
    private:
     gl::VertexArray vao;
+    gl::VertexArray emptyVao;
     gl::Buffer vbo;
     gl::Buffer ebo;
     gl::Buffer MVPUBObject;
@@ -200,10 +219,11 @@ class App : public WindowUtils::App {
     gl::Buffer linkListBuffer;
     gl::Buffer headBuffer;
     gl::Buffer heapBuffer;
-    gl::Buffer atomicBuffer;
+    gl::Buffer heapPointerBuffer;
     gl::Buffer whUniformBuffer;
     gl::Program fwdProgram;
     gl::Program lastProgram;
+    GLsync sync;
     std::size_t primitivesCount;
 
     struct ST_MVP {
@@ -213,18 +233,14 @@ class App : public WindowUtils::App {
     } mvp;
 
     ST_MVP *mappedMVP;
-    GLuint *pMapAtomicCounter;
     GLuint *pMapHeapCnt;
     static constexpr auto &d = OPENGL_HPP_DEFAULT_DISPATCHER;
     void render() {
+        static constexpr float kBlack[] = {0.0f, 0.0f, 0.0f, 1.0f};
 
-        vao.bind();
+        d.glClearBufferfv(GL_COLOR, 0, &kBlack[0]);
 
-        d.glClearColor(0.0f, 0.0f, 0.0f, 0.0f);
-        d.glClear(GL_DEPTH_BUFFER_BIT | GL_COLOR_BUFFER_BIT);
-        d.glViewport(0, 0, w, h);
-
-        float aspect = 1.0f * w / h;
+        float aspect = 1.0f * w / (h + 1e-6);
 
         mvp.proj = glm::perspective(glm::radians(80.0f), aspect, 0.1f, 1000.0f);
 
@@ -246,13 +262,18 @@ class App : public WindowUtils::App {
         mvp.view = glm::lookAt(lookAtPos, glm::vec3(0.0f),
                                glm::vec3(0.0f, 1.0f, 0.0f));
 
+        d.glMemoryBarrier(GL_UNIFORM_BARRIER_BIT);
+
         *mappedMVP = mvp;
 
-        MVPUBObject.flushMappedRange(0, sizeof(ST_MVP));
+        //同步，以防在上一个drawcall未完成之前将计数器清零
 
-        *pMapAtomicCounter = 0;
+        d.glClientWaitSync(sync, GL_SYNC_FLUSH_COMMANDS_BIT,
+                           GL_TIMEOUT_IGNORED);
 
-        atomicBuffer.flushMappedRange(0, sizeof(GLuint));
+        *pMapHeapCnt = 0;
+
+        //重置头指针
 
         d.glCopyNamedBufferSubData(
             static_cast<GLuint>(sourceInitBuffer),
@@ -264,22 +285,26 @@ class App : public WindowUtils::App {
         d.glDrawElements(GL_TRIANGLES, primitivesCount, GL_UNSIGNED_INT,
                          nullptr);
 
-        *pMapHeapCnt = 0;
+        //若将此Barrier注释掉，在流处理器较多的设备上会出现错误的渲染，原因是在上个draw中仍未建立完链表，计数器就被清零，用barrier而不用fence是为了更好的性能
 
-        heapBuffer.flushMappedRange(0, sizeof(GLuint));
+        d.glMemoryBarrier(GL_SHADER_STORAGE_BARRIER_BIT);
+
+        *pMapHeapCnt = 0;
 
         lastProgram.use();
 
-        //vao.unBind();
+        d.glDrawArrays(GL_TRIANGLE_STRIP, 0, 4);
 
-        d.glDrawArrays(GL_TRIANGLE_STRIP,0,4);
+        sync = d.glFenceSync(GL_SYNC_GPU_COMMANDS_COMPLETE, 0);
+
+        // d.glFinish();
     }
 
    public:
     App()
-        : WindowUtils::App(this),
+        : WindowUtils::App(this, 1000, 1000, false),
           primitivesCount(),
-          pMapAtomicCounter(),
+          mvp(),
           pMapHeapCnt(),
           MVPUBObject(),
           mappedMVP() {}
@@ -295,7 +320,7 @@ class App : public WindowUtils::App {
                             gl::BufferUsage::eDynamicCopy);
         linkListBuffer.initData(pixelCnts * sizeof(glm::vec4) * 3, nullptr,
                                 gl::BufferUsage::eDynamicCopy);
-        heapBuffer.initData((pixelCnts * 3 + 1) * sizeof(GLuint), nullptr,
+        heapBuffer.initData(pixelCnts * 3 * sizeof(GLuint), nullptr,
                             gl::BufferUsage::eDynamicCopy);
         whUniformBuffer.initData(sizeof(glm::ivec2), &wh,
                                  gl::BufferUsage::eDynamicCopy);
@@ -315,12 +340,6 @@ class App : public WindowUtils::App {
             std::memset(pBuffer, 0xff, pixelCnts * sizeof(GLuint));
             sourceInitBuffer.unmap();
         }
-
-        pMapHeapCnt = heapBuffer.mapRange<GLuint *>(
-            0, sizeof(GLuint),
-            gl::BufferAccessFlagBits::eMapPersistentBit |
-                gl::BufferAccessFlagBits::eMapWriteBit |
-                gl::BufferAccessFlagBits::eMapFlushExplicitBit);
     }
     void destroyBuffer() {
         gl::deleteObject<gl::Buffer>({headBuffer, linkListBuffer,
@@ -374,14 +393,14 @@ class App : public WindowUtils::App {
                   << lastProgram.getInfoLog() << std::endl;
 
         gl::deleteObject<gl::Shader>({vs, fs});
-
-        // d.glEnable(GL_DEPTH_TEST);
-
-        // d.glEnable(GL_BLEND);
-
-        // d.glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
-
-        // d.glDepthFunc(GL_LEQUAL);
+    }
+    void resize() {
+        d.glClientWaitSync(sync, GL_SYNC_FLUSH_COMMANDS_BIT,
+                           GL_TIMEOUT_IGNORED);
+        d.glViewport(0, 0, w, h);
+        destroyBuffer();
+        initBuffer();
+        sync = d.glFenceSync(GL_SYNC_GPU_COMMANDS_COMPLETE, 0);
     }
     void init() {
         glfwSetWindowSizeCallback(window, [](GLFWwindow *window, int w, int h) {
@@ -389,13 +408,14 @@ class App : public WindowUtils::App {
                 reinterpret_cast<App *>(glfwGetWindowUserPointer(window));
             app->w = w;
             app->h = h;
-            app->destroyBuffer();
-            app->initBuffer();
+            app->resize();
         });
 
         glfwSetWindowUserPointer(window, this);
 
         gl::initLoader(glfwGetProcAddress);
+
+        std::cout << gl::getString(gl::ConnectionState::eVersion) << std::endl;
 
         std::boolalpha(std::cout);
 
@@ -432,9 +452,9 @@ class App : public WindowUtils::App {
             }
         }
 
-        vao = gl::createObject<gl::VertexArray>();
+        std::tie(vao, emptyVao) = gl::createObject<gl::VertexArray, 2>();
 
-        std::tie(vbo, ebo, atomicBuffer, MVPUBObject) =
+        std::tie(vbo, ebo, heapPointerBuffer, MVPUBObject) =
             gl::createObject<gl::Buffer, 4>();
 
         GLsizeiptr pointsSize = sizeof(vertices[0]) * vertices.size();
@@ -450,18 +470,16 @@ class App : public WindowUtils::App {
         ebo.createStorage(indicesSize, vertexIndices.data(),
                           gl::BufferStorageFlagBits::eMapReadBit);
 
-        atomicBuffer.createStorage(
-            sizeof(GLuint), nullptr,
-            gl::BufferStorageFlagBits::eMapPersistentBit |
-                gl::BufferStorageFlagBits::eMapWriteBit);
+        auto flags = gl::BufferStorageFlagBits::eMapPersistentBit |
+                     gl::BufferStorageFlagBits::eMapWriteBit |
+                     gl::BufferStorageFlagBits::eMapCoherentBit | gl::BufferStorageFlagBits::eDynamicStorageBit;
 
-        atomicBuffer.bindBase(gl::BufferBindBaseTarget::eAtomicCounterBuffer,
-                              0);
+        heapPointerBuffer.createStorage(sizeof(GLuint), nullptr, flags);
 
-        MVPUBObject.createStorage(
-            sizeof(mvp), nullptr,
-            gl::BufferStorageFlagBits::eMapWriteBit |
-                gl::BufferStorageFlagBits::eMapPersistentBit);
+        heapPointerBuffer.bindBase(
+            gl::BufferBindBaseTarget::eShaderStorageBuffer, 3);
+
+        MVPUBObject.createStorage(sizeof(mvp), nullptr, flags);
 
         MVPUBObject.bindBase(gl::BufferBindBaseTarget::eUniformBuffer, 2);
 
@@ -483,19 +501,28 @@ class App : public WindowUtils::App {
         vao.bind();
 
         // map
-        mappedMVP = MVPUBObject.mapRange<ST_MVP *>(
-            0, sizeof(ST_MVP),
-            gl::BufferAccessFlagBits::eMapPersistentBit |
-                gl::BufferAccessFlagBits::eMapWriteBit |
-                gl::BufferAccessFlagBits::eMapFlushExplicitBit);
 
-        pMapAtomicCounter = atomicBuffer.mapRange<GLuint *>(
-            0, sizeof(GLuint),
-            gl::BufferAccessFlagBits::eMapPersistentBit |
-                gl::BufferAccessFlagBits::eMapWriteBit |
-                gl::BufferAccessFlagBits::eMapFlushExplicitBit);
+        auto mapFlags = gl::BufferAccessFlagBits::eMapPersistentBit |
+                        gl::BufferAccessFlagBits::eMapWriteBit |
+                        gl::BufferAccessFlagBits::eMapCoherentBit;
+        mappedMVP = MVPUBObject.mapRange<ST_MVP *>(0, sizeof(ST_MVP), mapFlags);
+
+        pMapHeapCnt =
+            heapPointerBuffer.mapRange<GLuint *>(0, sizeof(GLuint), mapFlags);
 
         initBuffer();
+
+        d.glDisable(GL_DEPTH_TEST);
+
+        d.glDepthMask(GL_FALSE);
+
+        d.glDepthFunc(GL_ALWAYS);
+
+        static constexpr float kfloat_one = {1.0f};
+
+        d.glClearBufferfv(GL_DEPTH, 0, &kfloat_one);
+
+        sync = d.glFenceSync(GL_SYNC_GPU_COMMANDS_COMPLETE, 0);
 
         gl::Error e{};
 
@@ -506,7 +533,7 @@ class App : public WindowUtils::App {
 
     void destroy() {
         MVPUBObject.unmap();
-        atomicBuffer.unmap();
+        heapPointerBuffer.unmap();
         destroyBuffer();
     }
 };

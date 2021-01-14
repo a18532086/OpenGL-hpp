@@ -1,5 +1,6 @@
 #pragma once
 #include <GLFW\glfw3.h>
+
 #include <memory>
 namespace WindowUtils {
 class App {
@@ -8,12 +9,12 @@ class App {
     App *thisApp;
 
    public:
-    App(App *thisApp = nullptr,int w = 800,int h = 800):thisApp(thisApp),w(w),h(h),window(){};
+    App(App *thisApp = nullptr, int w = 800, int h = 800, bool bVsync = true)
+        : thisApp(thisApp), w(w), h(h), window(), m_bVsync(bVsync){};
     int w;
     int h;
-    virtual void render() {
-
-    }
+    bool m_bVsync;
+    virtual void render() {}
     virtual void initWindow() {
         if (glfwInit() != GLFW_TRUE) {
             throw std::runtime_error("can not init GLFW !");
@@ -26,11 +27,9 @@ class App {
 
         glfwMakeContextCurrent(window);
 
-        glfwSwapInterval(GLFW_TRUE);
+        glfwSwapInterval(m_bVsync);
     }
-    virtual void init() {
-
-    }
+    virtual void init() {}
     virtual void run() {
         thisApp->initWindow();
         thisApp->init();
@@ -41,4 +40,4 @@ class App {
         }
     }
 };
-}  // namespace MyNamespace
+}  // namespace WindowUtils
